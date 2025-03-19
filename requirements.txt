@@ -27,5 +27,6 @@ streamlit-lottie>=0.0.5
 # Utilities
 python-dotenv>=1.0.0
 PyYAML<6.0.2
-pywin32=306
+pywin32==306
+
 
