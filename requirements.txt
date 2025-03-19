@@ -3,7 +3,7 @@ streamlit>=1.28.0
 pandas>=2.0.0
 numpy>=1.24.0
 plotly>=5.18.0
-matplotlib>=3.7.0,<3.8.0
+matplotlib>=3.8.0
 seaborn>=0.13.0
 # Geospatial packages
 geopandas>=0.14.0
@@ -12,11 +12,11 @@ folium>=0.15.0
 # Document handling
 reportlab>=4.0.8
 Pillow>=10.0.0
-docx2pdf>=0.1.8
 docx-mailmerge>=0.5.0
 python-docx>=1.0.1
 # Database and data handling
 pyodbc>=5.0.1
+snowflake-connector-python>=3.14.0
 sqlalchemy>=2.0.39
 openpyxl>=3.1.2
 xlrd>=2.0.1
@@ -26,7 +26,10 @@ webdriver-manager>=4.0.1
 streamlit-lottie>=0.0.5
 # Utilities
 python-dotenv>=1.0.0
-PyYAML<6.0.2
-pywin32==306
+PyYAML>=6.0.1
+
+# Windows-specific packages - these will only install on Windows
+# pywin32>=310 ; sys_platform == 'win32'  
+# docx2pdf>=0.1.8 ; sys_platform == 'win32'
 
 
