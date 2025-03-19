@@ -603,7 +603,7 @@ st.markdown(f"""
 
 # Calculate metrics with improved logic
 overspeed_threshold = 6  # Base threshold for violations
-events_per_day_threshold = 3  # Threshold for high risk drivers (events per day) - Changed from 6 to 3
+events_per_day_threshold = 1  # Threshold for high risk drivers (events per day) - Changed from 3 to 1
 
 # Clean driver names and get total unique drivers (excluding empty/unnamed) - No date filter
 df["Driver"] = df["Driver"].fillna("").astype(str).str.strip()

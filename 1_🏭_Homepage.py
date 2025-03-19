@@ -18,6 +18,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+import json
+import os
+import shutil
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
+from pathlib import Path
+
 # Third-party library imports
 import geopandas as gpd
 import leafmap.foliumap as leafmap
@@ -30,13 +39,11 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from streamlit_lottie import st_lottie
+import pyodbc
+
+# Mapping libraries
 import folium
 from folium.plugins import MarkerCluster, HeatMap
-import snowflake.connector
-
-# Add the main folder to the Python path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
 
 # Local imports
 from utils import (
@@ -50,7 +57,6 @@ from utils import (
     get_shared_data,
     refresh_data_if_needed
 )
-from sidebar import render_sidebar
 from translations import TRANSLATIONS, get_translation
 from config import (
     THEME_CONFIG,
@@ -1478,102 +1484,6 @@ def render_dashboard(filtered_df: pd.DataFrame, analytics_data, map_data):
         with st.spinner("Loading data and reports..."):
             render_dynamic_table(filtered_df)
             render_data_reports_section(filtered_df)
-
-# -----------------------------------------------------------------------------
-# DATA LOADING - SNOWFLAKE CONNECTION
-# -----------------------------------------------------------------------------
-
-@st.cache_data(ttl=3600)  # Cache for 1 hour
-def get_data_from_snowflake():
-    """Get data from Snowflake using secrets."""
-    try:
-        # Check if we're running in Streamlit Cloud (with secrets)
-        if "snowflake" in st.secrets:
-            # Read credentials from Streamlit Secrets
-            sf_credentials = st.secrets["snowflake"]
-            
-            # Connect to Snowflake
-            conn = snowflake.connector.connect(
-                user=sf_credentials["user"],
-                password=sf_credentials["password"],
-                account=sf_credentials["account"],
-                database=sf_credentials["database"],
-                schema=sf_credentials["schema"]
-            )
-            
-            # Query data
-            cur = conn.cursor()
-            cur.execute("SELECT * FROM FMS_DATA")  # Adjust table name as needed
-            rows = cur.fetchall()
-            
-            # Get column names from cursor description
-            columns = [col[0] for col in cur.description]
-            
-            # Convert to DataFrame
-            df = pd.DataFrame(rows, columns=columns)
-            conn.close()
-            return df
-            
-        else:
-            st.warning("Snowflake credentials not found in secrets. Using alternative data source.")
-            return None
-    except Exception as e:
-        st.error(f"Error connecting to Snowflake: {e}")
-        return None
-
-# Modify the existing get_shared_data function to try Snowflake first
-def get_shared_data():
-    """Get data from Snowflake or fallback to existing methods."""
-    if "df" in st.session_state and not st.session_state.get("force_reload", False):
-        st.session_state.force_reload = False
-        return st.session_state.df
-    
-    # Try to get data from Snowflake first
-    snowflake_df = get_data_from_snowflake()
-    
-    if snowflake_df is not None:
-        df = snowflake_df
-    else:
-        # Fallback to original data loading method
-        try:
-            # Use direct database connection for local development
-            try:
-                if "pyodbc" not in sys.modules:
-                    import pyodbc
-                conn_str = f"DRIVER={{{DB_CONFIG['driver']}}};SERVER={DB_CONFIG['server']};DATABASE={DB_CONFIG['database']};UID={DB_CONFIG['username']};PWD={DB_CONFIG['password']}"
-                conn = pyodbc.connect(conn_str)
-                query = """
-                SELECT * 
-                FROM safety_events 
-                WHERE Event_Date >= DATEADD(day, -30, GETDATE())
-                """
-                df = pd.read_sql(query, conn)
-                conn.close()
-            except Exception as db_error:
-                st.error(f"Database Connection Error: {db_error}")
-                # Fallback to sample data
-                df = pd.read_csv("data/sample_data.csv")
-        
-        except Exception as e:
-            st.error(f"Error loading data: {e}")
-            # Final fallback to sample data if available
-            try:
-                df = pd.read_csv("data/sample_data.csv")
-            except:
-                # Create empty DataFrame with expected columns if no data is available
-                df = pd.DataFrame(columns=["Event Type", "Driver", "License Plate", "Shift Date", "Group", "Shift", "Severity"])
-    
-    # Cache the dataframe
-    st.session_state.df = df
-    st.session_state.last_loaded = datetime.now()
-    
-    return df
-
-def refresh_data_if_needed():
-    """Force refresh of data if needed."""
-    if st.session_state.get("refresh_clicked", False):
-        st.session_state.force_reload = True
-        st.session_state.refresh_clicked = False
 
 # -----------------------------------------------------------------------------
 # MAIN FUNCTION
