@@ -1,0 +1,7 @@
+[theme]
+primaryColor = "#F57D1F"  # Bright Orange (Selection & Highlights)
+backgroundColor = "#212121"  # Dark Blue (Strong, Professional)
+secondaryBackgroundColor = "#5E686D"  # Slightly Lighter Blue (Layered Depth)
+textColor = "#FAFFC5"  # Light Grey (Good Visibility on Dark Blue)
+accentColor = "#FF6500"  # Deep Orange (Warm Industrial Tone)
+font = "sans serif"

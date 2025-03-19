@@ -1,0 +1,13 @@
+[theme]
+primaryColor = "#1E90FF"         # Dodger Blue: bright and visible
+backgroundColor = "#F0F8FF"      # Alice Blue: light sky blue background
+secondaryBackgroundColor = "#E6F3FF"  # Light sky blue for panels
+textColor = "#000080"            # Navy Blue: dark blue for better contrast
+font = "sans serif"              # Clean and readable font
+
+[server]
+enableXsrfProtection = true
+enableCORS = false
+
+[browser]
+gatherUsageStats = false
