@@ -6,7 +6,7 @@ textColor = "#000080"            # Navy Blue: dark blue for better contrast
 font = "sans serif"              # Clean and readable font
 
 [server]
-enableXsrfProtection = true
+enableXsrfProtection = false
 enableCORS = false
 
 [browser]
