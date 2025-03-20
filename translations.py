@@ -341,6 +341,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "no_data_for_report": "⚠️ No data available for report generation.",
         "column_not_found_error": "⚠️ Required column '{column}' not found in the dataset.",
         "data_processing_error": "⚠️ Error processing data: {error}",
+
+        # Performance Dashboard Translations
+        "performance_dashboard_title": "Driver Performance Dashboard",
+        "performance_metrics": "Driver Performance Metrics",
+        "performance_charts": "Performance Visualizations",
+        "driver_performance": "Driver Analysis",
     },
     
     "ZH": {
@@ -679,6 +685,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "no_data_for_report": "⚠️ 没有可用数据生成报告。",
         "column_not_found_error": "⚠️ 数据集中未找到所需的列 '{column}'。",
         "data_processing_error": "⚠️ 处理数据时出错: {error}",
+
+        # Performance Dashboard Translations
+        "performance_dashboard_title": "驾驶员表现仪表板",
+        "performance_metrics": "驾驶员表现指标",
+        "performance_charts": "表现可视化",
+        "driver_performance": "驾驶员分析",
     }
 }
 

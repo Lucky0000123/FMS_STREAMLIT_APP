@@ -2,6 +2,8 @@
 import streamlit as st
 import time
 import json
+import pdfkit
+import platform
 
 from sidebar import render_sidebar
 
@@ -210,7 +212,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # Render header using utils function
-render_header(get_translation("speeding_title", lang))
+render_header(get_translation("speeding_title", lang), "")
 
 # After the header section, add the following CSS and content
 st.markdown("""
@@ -615,6 +617,9 @@ if 'Shift Date' in df.columns:
                     margin=dict(l=20, r=20, t=60, b=80)
                 )
                 
+                # Store the main figure in session state for PDF generation
+                st.session_state["main_trend_fig"] = fig1
+
                 # Display the chart
                 st.plotly_chart(fig1, use_container_width=True, key="main_speeding_trend")
             else:
@@ -772,94 +777,152 @@ else:
 # -------------------- DOWNLOAD PDF BUTTON --------------------
 render_chart_title("download_report")
 
-def create_html_report():
-    """Create an HTML string of the dashboard content."""
-    html_content = f"""
-    <html>
-    <head>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 40px; }}
-            .header {{ text-align: center; margin-bottom: 30px; }}
-            .chart-container {{ margin: 20px 0; }}
-            .timestamp {{ text-align: right; color: #666; }}
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>{get_translation("report_title", lang)}</h1>
-            <p class="timestamp">{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-        </div>
-    """
+# Add a new function for direct PDF generation using ReportLab
+def generate_direct_pdf():
+    """Generate PDF report directly using ReportLab - much faster than HTML conversion."""
+    import io
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter, A4
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
     
-    # Add main trend chart
-    if 'fig1' in locals():
-        html_content += f"""
-        <div class="chart-container">
-            {fig1.to_html(full_html=False, include_plotlyjs='cdn')}
-        </div>
-        """
+    # Create a BytesIO buffer to receive the PDF data
+    buffer = io.BytesIO()
     
-    # Add group charts
-    if 'group_fig_list' in st.session_state:
-        for fig in st.session_state['group_fig_list'][:3]:
-            html_content += f"""
-            <div class="chart-container">
-                {fig.to_html(full_html=False, include_plotlyjs='cdn')}
-            </div>
-            """
+    # Create the PDF document
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=72,
+        leftMargin=72,
+        topMargin=72,
+        bottomMargin=72
+    )
     
-    html_content += "</body></html>"
-    return html_content
+    # Styles
+    styles = getSampleStyleSheet()
+    title_style = styles['Heading1']
+    title_style.alignment = 1  # Center alignment
+    title_style.textColor = colors.HexColor('#1D5B79')
+    
+    subtitle_style = styles['Heading2']
+    subtitle_style.textColor = colors.HexColor('#2E8B57')
+    
+    normal_style = styles['Normal']
+    
+    # Initialize story elements
+    elements = []
+    
+    # Add the title
+    elements.append(Paragraph(get_translation("report_title", lang), title_style))
+    elements.append(Spacer(1, 0.3 * inch))
+    
+    # Add timestamp
+    timestamp_style = ParagraphStyle(
+        'timestamp',
+        parent=normal_style,
+        alignment=2,  # Right alignment
+        textColor=colors.gray
+    )
+    elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", timestamp_style))
+    elements.append(Spacer(1, 0.5 * inch))
+    
+    # Add status message
+    elements.append(Paragraph("Generating charts...", normal_style))
+    
+    # Helper function to convert Plotly figures to images for the PDF
+    def add_plotly_figure(fig, caption, width=7*inch):
+        try:
+            # Convert Plotly figure to PNG image bytes
+            img_bytes = fig.to_image(format="png", width=1000, height=600, scale=1.5)
+            
+            # Create an in-memory image
+            img_stream = io.BytesIO(img_bytes)
+            img = Image(img_stream, width=width)
+            
+            # Add caption and image
+            elements.append(Spacer(1, 0.3 * inch))
+            elements.append(Paragraph(caption, subtitle_style))
+            elements.append(Spacer(1, 0.1 * inch))
+            elements.append(img)
+            return True
+        except Exception as e:
+            elements.append(Paragraph(f"Error generating chart: {str(e)}", normal_style))
+            return False
+    
+    # Add charts - main trend chart first
+    charts_added = False
+    if "main_trend_fig" in st.session_state:
+        if add_plotly_figure(st.session_state["main_trend_fig"], "Overall Speeding Trend"):
+            charts_added = True
+    
+    # Add group charts if available
+    if 'group_fig_list' in st.session_state and st.session_state['group_fig_list']:
+        elements.append(Spacer(1, 0.3 * inch))
+        elements.append(Paragraph("Overspeeding by Fleet Group", subtitle_style))
+        
+        for i, fig in enumerate(st.session_state['group_fig_list'][:3]):
+            if add_plotly_figure(fig, f"Fleet Group {i+1}", width=6.5*inch):
+                charts_added = True
+    
+    # If no charts were added, show a message
+    if not charts_added:
+        elements.append(Spacer(1, inch))
+        no_data_style = ParagraphStyle(
+            'nodata',
+            parent=normal_style,
+            alignment=1,  # Center
+            textColor=colors.HexColor('#1D5B79'),
+            fontSize=14
+        )
+        elements.append(Paragraph("No data available for the current selection", no_data_style))
+        elements.append(Spacer(1, 0.2 * inch))
+        elements.append(Paragraph("Please adjust your filters or upload data to generate charts.", normal_style))
+    
+    # Add footer
+    elements.append(Spacer(1, 0.5 * inch))
+    footer_style = ParagraphStyle(
+        'footer',
+        parent=normal_style,
+        alignment=1,  # Center
+        textColor=colors.gray,
+        fontSize=8
+    )
+    elements.append(Paragraph("Generated by FMS Safety Dashboard", footer_style))
+    
+    # Build the PDF document
+    doc.build(elements)
+    
+    # Get the PDF value from the buffer
+    pdf_data = buffer.getvalue()
+    buffer.close()
+    
+    return pdf_data
 
-# Add the download button section
+# Replace the download button section
 if st.button(get_translation("generate_pdf", lang), key="generate_pdf"):
     with st.spinner(get_translation("generating_pdf", lang)):
         try:
-            import pdfkit
-            
             start_time = time.time()
             
-            # Generate HTML content
-            html_content = create_html_report()
-            
-            # Create temporary HTML file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.html', mode='w', encoding='utf-8') as temp_html:
-                temp_html.write(html_content)
-                html_path = temp_html.name
-            
-            # Convert HTML to PDF
-            pdf_path = html_path.replace('.html', '.pdf')
-            pdfkit.from_file(html_path, pdf_path, options={
-                'enable-local-file-access': None,
-                'javascript-delay': 1000,
-                'no-stop-slow-scripts': None,
-                'page-size': 'Letter',
-                'margin-top': '0.75in',
-                'margin-right': '0.75in',
-                'margin-bottom': '0.75in',
-                'margin-left': '0.75in'
-            })
+            # Generate PDF directly without HTML conversion
+            pdf_data = generate_direct_pdf()
             
             generation_time = time.time() - start_time
             st.success(f"PDF generated in {generation_time:.1f} seconds!")
             
             # Create download button
-            with open(pdf_path, "rb") as pdf_file:
-                st.download_button(
-                    label=get_translation("download_pdf", lang),
-                    data=pdf_file,
-                    file_name=f"safety_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                    mime="application/pdf",
-                    key="download_pdf"
-                )
+            st.download_button(
+                label=get_translation("download_pdf", lang),
+                data=pdf_data,
+                file_name=f"safety_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                mime="application/pdf",
+                key="download_pdf"
+            )
             
-            # Cleanup temporary files
-            try:
-                os.remove(html_path)
-                os.remove(pdf_path)
-            except Exception:
-                pass  # Ignore cleanup errors
-                
         except Exception as e:
             st.error(f"{get_translation('pdf_error', lang)} {e}")
-            st.info("Please install wkhtmltopdf: pip install wkhtmltopdf")
+            st.error("Error details:", e)
+            import traceback
+            st.code(traceback.format_exc())

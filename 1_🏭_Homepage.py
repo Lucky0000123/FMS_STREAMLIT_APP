@@ -969,9 +969,21 @@ def render_time_series(filtered_df: pd.DataFrame, avg_speeding=None):
     
     if len(avg_speeding) >= 2:
         try:
+            # Ensure data is numeric before trend calculation
             x_numeric = np.arange(len(avg_speeding))
-            y_values = avg_speeding['Overspeeding Value']
-            trend_coeffs = np.polyfit(x_numeric, y_values, 1)
+            y_values = pd.to_numeric(avg_speeding['Overspeeding Value'], errors='coerce')
+            
+            # Skip NaN values in the trend calculation
+            valid_indices = ~np.isnan(y_values)
+            if sum(valid_indices) < 2:
+                st.warning("⚠️ Not enough valid numeric data points to compute a trend line.")
+                return
+                
+            x_valid = x_numeric[valid_indices]
+            y_valid = y_values[valid_indices]
+            
+            # Calculate trend line with valid numeric data only
+            trend_coeffs = np.polyfit(x_valid, y_valid, 1)
             trend_line = np.polyval(trend_coeffs, x_numeric)
             avg_speeding['Trend'] = trend_line
             fig_ts = go.Figure()
@@ -1452,8 +1464,46 @@ def process_map_data(filtered_df: pd.DataFrame):
     }
 
 def render_dashboard(filtered_df: pd.DataFrame, analytics_data, map_data):
-    """Renders the dashboard layout based on the selected section."""
-    # Always render KPIs for all sections
+    """Render the main dashboard UI components."""
+    # Page Header
+    from utils import render_header as render_header_with_params
+    render_header_with_params(
+        "FMS Safety Dashboard",
+        "",
+        "assets/dashboard.png"
+    )
+    render_glow_line()
+    
+    # Database connection status
+    if 'data_source' in st.session_state:
+        data_source = st.session_state.data_source
+        col1, col2, col3 = st.columns([3, 1, 1])
+        
+        with col1:
+            if data_source == "sql":
+                st.success("✅ Connected to SQL Database")
+            elif data_source == "upload":
+                st.info("ℹ️ Using uploaded dataset")
+            elif data_source == "network":
+                st.info("ℹ️ Using network dataset")
+            elif data_source == "sample":
+                st.warning("⚠️ Using sample dataset - For demonstration purposes only")
+        
+        with col2:
+            if st.button("Refresh Data"):
+                st.experimental_rerun()
+        
+        with col3:
+            if st.button("Database Settings"):
+                st.switch_page("pages/4_⚙️_Settings.py")
+
+    if 'sql_connection_error' in st.session_state and st.session_state.data_source != "sql":
+        with st.expander("Database Connection Issues"):
+            st.error(f"{st.session_state.sql_connection_error}")
+            st.info("Use the 'Database Settings' button to configure your SQL Server connection.")
+
+    # Continue with existing code
+    # KPI Metrics
     render_kpis(filtered_df)
     
     # Render navigation

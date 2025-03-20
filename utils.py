@@ -40,72 +40,32 @@ from translations import TRANSLATIONS, get_translation
 
 def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Process the input DataFrame with common transformations:
-      - Convert date columns to datetime.
-      - Replace missing numeric values with zero.
-      - Calculate overspeeding values.
-      - Assign risk levels based on overspeeding thresholds.
-      - Ensure a 'Group' column exists by duplicating 'Fleet' if needed.
+    Process a dataframe to ensure it has the correct column formats and values.
     
-    Parameters:
-        df (pd.DataFrame): The raw input DataFrame.
+    Args:
+        df: The dataframe to process
         
     Returns:
-        pd.DataFrame: The processed DataFrame.
+        The processed dataframe
     """
-    if df.empty:
-        return df
-
-    try:
-        # Create a copy to avoid altering the original DataFrame
-        processed_df = df.copy()
-
-        # Convert specific columns to datetime
-        for col in ['Shift Date', 'Date']:
-            if col in processed_df.columns:
-                processed_df[col] = pd.to_datetime(processed_df[col], errors='coerce')
-
-        # Fill missing numeric values with zero
-        numeric_columns = processed_df.select_dtypes(include=[np.number]).columns
-        processed_df[numeric_columns] = processed_df[numeric_columns].fillna(0)
-
-        # Calculate overspeeding value if columns exist and apply new thresholds
-        if 'Max Speed(Km/h)' in processed_df.columns and 'Speed Limit' in processed_df.columns:
-            processed_df['Overspeeding Value'] = processed_df['Max Speed(Km/h)'] - processed_df['Speed Limit']
-            # New thresholds for categorizing overspeeding
-            processed_df['Overspeeding Category'] = pd.cut(
-                processed_df['Overspeeding Value'],
-                bins=[-float('inf'), 0, 5, 10, 15, float('inf')],
-                labels=['None', 'Low', 'Moderate', 'High', 'Extreme']
-            )
-
-        # Assign risk levels based on overspeeding values
-        processed_df = assign_risk_level(processed_df)
-
-        # Update risk level assignment based on new overspeeding categories
-        if 'Overspeeding Category' in processed_df.columns:
-            processed_df['Risk Level'] = np.select(
-                [
-                    processed_df['Overspeeding Category'] == 'Extreme',
-                    processed_df['Overspeeding Category'] == 'High',
-                    processed_df['Overspeeding Category'] == 'Moderate',
-                    processed_df['Overspeeding Category'] == 'Low',
-                    processed_df['Overspeeding Category'] == 'None'
-                ],
-                ['Extreme', 'High', 'Medium', 'Low', 'None'],
-                default='Medium'
-            )
-
-        # Create 'Group' column from 'Fleet' if missing
-        if 'Group' not in processed_df.columns and 'Fleet' in processed_df.columns:
-            processed_df['Group'] = processed_df['Fleet']
-        
-        return processed_df
-
-    except Exception as e:
-        logging.error(f"Error in data processing: {e}")
-        st.error(f"Error processing data: {e}")
-        return df
+    # Make a copy to avoid modifying the original
+    df = df.copy()
+    
+    # Process date columns
+    if "Shift Date" in df.columns:
+        df["Shift Date"] = pd.to_datetime(df["Shift Date"], errors="coerce")
+        df.dropna(subset=["Shift Date"], inplace=True)
+        df["Date"] = df["Shift Date"].dt.date
+    
+    # Process shift values (capitalize)
+    if "Shift" in df.columns:
+        df["Shift"] = df["Shift"].astype(str).str.capitalize()
+    
+    # Ensure driver names are clean
+    if "Driver" in df.columns:
+        df["Driver"] = df["Driver"].fillna("").astype(str).str.strip()
+    
+    return df
 
 
 def assign_risk_level(df: pd.DataFrame) -> pd.DataFrame:
@@ -147,17 +107,54 @@ def get_sql_connection() -> Optional[pyodbc.Connection]:
         otherwise, None.
     """
     try:
-        conn = pyodbc.connect(
-            f'DRIVER={{SQL Server}};'
-            f'SERVER=10.211.10.2;'
-            f'DATABASE=FMS_DB;'
-            f'UID=headofnickel;'
-            f'PWD=Dataisbeautifulrev001!'
-        )
-        return conn
+        # Try to use secrets.toml first
+        if hasattr(st, 'secrets') and 'sql' in st.secrets:
+            # Log attempt before connecting
+            logging.info(f"Attempting SQL connection to {st.secrets.sql.host}/{st.secrets.sql.database}")
+            
+            # Build connection string
+            conn_str = (
+                f'DRIVER={{{st.secrets.sql.driver}}};'
+                f'SERVER={st.secrets.sql.host};'
+                f'DATABASE={st.secrets.sql.database};'
+            )
+            
+            # Check if using Windows Authentication or SQL Authentication
+            if hasattr(st.secrets.sql, 'trusted_connection') and st.secrets.sql.trusted_connection.lower() == 'yes':
+                conn_str += 'Trusted_Connection=yes;'
+                logging.info("Using Windows Authentication for SQL connection")
+            else:
+                conn_str += f'UID={st.secrets.sql.username};PWD={st.secrets.sql.password}'
+                logging.info(f"Using SQL Authentication with username: {st.secrets.sql.username}")
+            
+            # Try connecting with the built connection string
+            try:
+                conn = pyodbc.connect(conn_str)
+                logging.info(f"Successfully connected to SQL Server")
+                
+                # Clear any previous errors
+                if 'sql_connection_error' in st.session_state:
+                    del st.session_state.sql_connection_error
+                
+                return conn
+            except Exception as inner_e:
+                error_msg = f"SQL connection failed: {str(inner_e)}"
+                logging.error(error_msg)
+                st.session_state.sql_connection_error = error_msg
+                return None
+        # Fallback to hardcoded credentials for local development
+        else:
+            # Don't attempt connection if we don't have secrets
+            msg = "No SQL credentials found in secrets.toml"
+            logging.warning(msg)
+            st.session_state.sql_connection_error = msg
+            return None
     except Exception as e:
-        st.error(f"⚠️ SQL Connection Failed: {e}")
-        logging.error(f"SQL Connection Error: {e}")
+        # Log the error but don't show it to the user
+        error_msg = f"Unexpected error setting up SQL connection: {e}"
+        logging.error(error_msg)
+        # Store the error in session state for diagnostics
+        st.session_state.sql_connection_error = error_msg
         return None
 
 
@@ -220,26 +217,116 @@ def fetch_sql_data() -> pd.DataFrame:
             return pd.DataFrame()
 
 
-def load_data() -> pd.DataFrame:
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def load_data():
     """Load data from an uploaded file or a default dataset."""
-    DEFAULT_FILE_PATH = r"\\10.211.3.254\04. Mining\WBN - FLEET MANAGEMENT SYSTEM\Haulage DT Safety Event Report\FMS Event Data Query.xlsx"
-    time.sleep(1.5)
+    # Set up logging for data source
+    if 'data_source' not in st.session_state:
+        st.session_state.data_source = None
+    
+    # Try SQL connection first
+    sql_error = None
+    try:
+        logging.info("Attempting to load data from SQL Server...")
+        conn = get_sql_connection()
+        if conn:
+            try:
+                # Execute query
+                query = "SELECT * FROM dbo.FMS_SPEED"
+                logging.info(f"Executing SQL query: {query}")
+                
+                # Start timer to measure query performance
+                start_time = time.time()
+                df = pd.read_sql(query, conn)
+                query_time = time.time() - start_time
+                
+                conn.close()
+                if not df.empty:
+                    # Log date range information for debugging
+                    if 'Shift Date' in df.columns:
+                        min_date = pd.to_datetime(df['Shift Date']).min().date() if not df.empty else None
+                        max_date = pd.to_datetime(df['Shift Date']).max().date() if not df.empty else None
+                        logging.info(f"SQL data date range: {min_date} to {max_date}")
+                        # Show date range in UI for debugging
+                        st.session_state.sql_date_range = f"{min_date} to {max_date}"
+                    
+                    st.session_state.using_default_data = False
+                    st.session_state.data_source = "sql"
+                    logging.info(f"Successfully loaded {len(df)} rows from SQL Server in {query_time:.2f} seconds")
+                    return process_dataframe(df)
+            except Exception as e:
+                # Log the error
+                sql_error = f"SQL query failed: {str(e)}"
+                logging.error(sql_error)
+                st.session_state.sql_connection_error = sql_error
+    except Exception as e:
+        # Log the error
+        sql_error = f"SQL connection failed: {str(e)}"
+        logging.error(sql_error)
+        st.session_state.sql_connection_error = sql_error
+    
+    # If SQL failed, try uploaded file
     uploaded_file = st.session_state.get("uploaded_file")
     if uploaded_file is not None:
         try:
+            logging.info(f"Attempting to load data from uploaded file: {uploaded_file.name}")
             df = pd.read_excel(uploaded_file)
             st.session_state.using_default_data = False
+            st.session_state.data_source = "upload"
+            logging.info(f"Successfully loaded {len(df)} rows from uploaded file")
             st.success("✅ Uploaded dataset is now being used!")
+            return process_dataframe(df)
         except Exception as e:
-            st.error(f"⚠️ Failed to read uploaded file: {e}")
-            return pd.DataFrame()
-    else:
-        if os.path.exists(DEFAULT_FILE_PATH):
+            error_msg = f"Failed to read uploaded file: {e}"
+            logging.error(error_msg)
+            st.error(f"⚠️ {error_msg}")
+    
+    # Try network file share (for local environment)
+    DEFAULT_FILE_PATH = r"\\10.211.3.254\04. Mining\WBN - FLEET MANAGEMENT SYSTEM\Haulage DT Safety Event Report\FMS Event Data Query.xlsx"
+    if os.path.exists(DEFAULT_FILE_PATH):
+        try:
+            logging.info(f"Attempting to load data from network file: {DEFAULT_FILE_PATH}")
             df = pd.read_excel(DEFAULT_FILE_PATH)
             st.session_state.using_default_data = True
-        else:
-            st.error("⚠️ Default data file not found!")
-            return pd.DataFrame()
+            st.session_state.data_source = "network"
+            logging.info(f"Successfully loaded {len(df)} rows from network file")
+            st.info("ℹ️ Using network dataset.")
+            return process_dataframe(df)
+        except Exception as e:
+            error_msg = f"Failed to read network file: {e}"
+            logging.error(error_msg)
+    
+    # Final fallback - try local sample data in the repo (for cloud deployment)
+    try:
+        # Check if we have a sample data file in the data directory
+        sample_file = "data/sample_fms_data.xlsx"
+        if os.path.exists(sample_file):
+            logging.info(f"Falling back to sample data: {sample_file}")
+            df = pd.read_excel(sample_file)
+            st.session_state.using_default_data = True
+            st.session_state.data_source = "sample"
+            logging.info(f"Successfully loaded {len(df)} rows from sample file")
+            st.warning("⚠️ Using sample dataset. Connect to SQL or upload data for latest information.")
+            return process_dataframe(df)
+    except Exception as e:
+        error_msg = f"Failed to read sample file: {e}"
+        logging.error(error_msg)
+    
+    # If we get here, all attempts failed
+    logging.critical("All data loading attempts failed!")
+    st.error("⚠️ No data sources available. Please upload a file or check connection settings.")
+    
+    # Display connection diagnostics
+    if sql_error:
+        with st.expander("SQL Connection Diagnostics"):
+            st.error(f"SQL Connection Error: {sql_error}")
+            st.info("Please check the settings page to troubleshoot your SQL connection.")
+            
+            # Add button to go to settings page
+            if st.button("Go to Settings & Diagnostics"):
+                st.switch_page("pages/4_⚙️_Settings.py")
+    
+    return pd.DataFrame()
 
 
 def load_lottie_json(json_path: str) -> Optional[Any]:
