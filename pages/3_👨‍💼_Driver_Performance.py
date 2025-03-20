@@ -1,13 +1,4 @@
-# Import streamlit first
 import streamlit as st
-
-# Set page config as the first Streamlit command
-st.set_page_config(
-    page_title="Driver Performance & Warning Letters",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -20,6 +11,11 @@ from mailmerge import MailMerge
 from io import BytesIO
 from streamlit_lottie import st_lottie
 import json
+import time
+import uuid
+from pathlib import Path
+
+# Custom utility imports (ensure these are available in your project)
 from utils import (
     render_glow_line,
     load_data,
@@ -27,13 +23,11 @@ from utils import (
     render_chart_title,
     get_shared_data,
     filter_data,
-    clear_shared_data
+    clear_shared_data,
+    render_header
 )
 from sidebar import render_sidebar
-from translations import (
-    get_translation,
-    get_event_translation
-)
+from translations import get_translation, get_event_translation
 from config import (
     THEME_CONFIG,
     RISK_THRESHOLDS,
@@ -42,618 +36,338 @@ from config import (
     DB_CONFIG,
     GLOBAL_CSS
 )
-import time
-from pathlib import Path
-import uuid
 
-# Add custom CSS for KPI cards
-st.markdown("""
+# -----------------------------------------------------------------------------
+# PAGE CONFIGURATION & THEME SETUP
+# -----------------------------------------------------------------------------
+st.set_page_config(
+    page_title="Driver Performance & Warning Letters",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Set theme-based colors based on session_state
+theme = st.session_state.get("theme", "light")
+if theme == "dark":
+    bg_color = "#121212"
+    card_bg = "linear-gradient(145deg, #1e1e1e, #2d2d2d)"
+    text_color = "#FFFFFF"
+    border_color = "#2a2a2a"
+    section_bg = "rgba(40, 40, 40, 0.9)"
+    header_color = "#3A95FF"
+else:
+    bg_color = "#f8f9fa"
+    card_bg = "linear-gradient(145deg, #ffffff, #f5f7fa)"
+    text_color = "#2E3440"
+    border_color = "rgba(29, 91, 121, 0.1)"
+    section_bg = "white"
+    header_color = "#1D5B79"
+
+# -----------------------------------------------------------------------------
+# GLOBAL CSS STYLING
+# -----------------------------------------------------------------------------
+st.markdown(f"""
 <style>
-    .kpi-card {
-        background: linear-gradient(145deg, #ffffff, #f5f7fa);
+    /* KPI Card Styles */
+    .kpi-card {{
+        background: {card_bg};
         border-radius: 16px;
-        padding: 24px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        padding: 1.5rem;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+        border: 1px solid {border_color};
         transition: all 0.3s ease;
-        border: 1px solid rgba(0, 0, 0, 0.05);
-        margin: 12px;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .kpi-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
-    }
-    
-    .kpi-title {
-        font-size: 1.1rem;
-        color: #64748b;
-        margin-bottom: 12px;
-        font-weight: 600;
-        text-transform: uppercase;
-    }
-    
-    .kpi-value {
-        font-size: 2.5rem;
-        font-weight: 700;
-        line-height: 1.2;
-        margin: 10px 0;
-    }
-    
-    .kpi-card.blue {
-        background: linear-gradient(145deg, #ffffff, #f0f7ff);
-    }
-    
-    .kpi-card.red {
-        background: linear-gradient(145deg, #ffffff, #fff5f5);
-    }
-    
-    .kpi-card.green {
-        background: linear-gradient(145deg, #ffffff, #f0fff4);
-    }
-    
-    .kpi-card.blue .kpi-value {
-        color: #2575fc;
-    }
-    
-    .kpi-card.red .kpi-value {
-        color: #ff416c;
-    }
-    
-    .kpi-card.green .kpi-value {
-        color: #00c6ff;
-    }
-    
-    .kpi-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 4px;
         height: 100%;
-        transition: all 0.3s ease;
-    }
-    
-    .kpi-card.blue::before {
-        background: linear-gradient(180deg, #2575fc, #1a5fc9);
-    }
-    
-    .kpi-card.red::before {
-        background: linear-gradient(180deg, #ff416c, #cc3356);
-    }
-    
-    .kpi-card.green::before {
-        background: linear-gradient(180deg, #00c6ff, #0098cc);
-    }
-    
-    .kpi-card:hover::before {
-        width: 100%;
-        opacity: 0.05;
-    }
+        color: {text_color};
+    }}
+    .kpi-title {{
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 0.8rem;
+        color: {header_color};
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }}
+    .kpi-value {{
+        font-size: 2.2rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+        color: {header_color};
+    }}
+    .kpi-subtitle {{
+        font-size: 0.9rem;
+        color: {text_color};
+        opacity: 0.8;
+    }}
+    /* Table, sidebar, and other component styling … (retain additional CSS as needed) */
+    section[data-testid="stSidebar"] {{
+        background-color: {bg_color};
+    }}
+    .main .block-container {{
+        padding-top: 1rem;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
-# --------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # LANGUAGE TOGGLE AND ANIMATION
-# --------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 if "language" not in st.session_state:
     st.session_state["language"] = "EN"
 
 def toggle_language():
     st.session_state["language"] = "ZH" if st.session_state["language"] == "EN" else "EN"
 
-# Create a row with two columns for the translation button and JSON animation
+# Two-column layout for translation toggle and animation
 col_trans, col_json = st.columns([1, 1])
-
 with col_trans:
-    st.markdown("""
-    <div style="
-        padding: 20px;
-        border-radius: 12px;
-        margin-top: 20px;
-        text-align: center;
-        background: linear-gradient(to right, rgba(29, 91, 121, 0.05), transparent);
-    ">
-        <h3 style="
-            color: #1D5B79;
-            margin-bottom: 15px;
-            font-size: 32px;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-        ">{}</h3>
+    st.markdown(f"""
+    <div style="padding: 20px; border-radius: 12px; margin-top: 20px; text-align: center;
+                background: linear-gradient(to right, rgba(29, 91, 121, 0.05), transparent);">
+        <h3 style="color: #1D5B79; margin-bottom: 15px; font-size: 32px; font-weight: 600; letter-spacing: 0.5px;">
+            {get_translation("click_for_translation", st.session_state.language)}
+        </h3>
     </div>
-    """.format(get_translation("click_for_translation", st.session_state.language)), unsafe_allow_html=True)
-    
+    """, unsafe_allow_html=True)
     translation_label = "切换中文" if st.session_state["language"] == "EN" else "Switch to English"
-st.button(translation_label, on_click=toggle_language)
+    st.button(translation_label, on_click=toggle_language)
 
 with col_json:
     try:
-        # Load the animation JSON file
         with open("assets/ani6.json", "r") as f:
             animation_data = json.load(f)
-        
-        # Display the animation
-        st_lottie(
-            animation_data,
-            speed=1,
-            reverse=False,
-            loop=True,
-            quality="high",
-            height=150
-        )
+        st_lottie(animation_data, speed=1, reverse=False, loop=True, quality="high", height=150)
     except Exception as e:
         st.warning("Animation could not be loaded. Please ensure the JSON file exists in the assets folder.")
 
-# Add space after the row
 st.markdown("<br>", unsafe_allow_html=True)
-
-# --------------------------------------------------------------------
-# TRANSLATION HELPER
-# --------------------------------------------------------------------
-def t(en_text, zh_text):
-    return zh_text if st.session_state["language"] == "ZH" else en_text
-
 render_glow_line()
 
-# --------------------------------------------------------------------
-# PAGE TITLE AND HEADER STYLING
-# --------------------------------------------------------------------
-st.markdown(f"""
-<div style="
-    background: linear-gradient(135deg, rgba(29, 91, 121, 0.1), rgba(46, 139, 87, 0.1));
-    padding: 2rem;
-    border-radius: 15px;
-    margin: 1rem 0 2rem 0;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-">
-    <h1 style="
-        font-size: 48px;
-        font-weight: 800;
-        background: linear-gradient(135deg, #1D5B79, #2E8B57);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-align: center;
-        margin: 0;
-        padding: 10px;
-        letter-spacing: 1px;
-        font-family: 'Segoe UI', Arial, sans-serif;
-    ">{get_translation("driver_performance_title", st.session_state.language)}</h1>
-</div>
-""", unsafe_allow_html=True)
-
-# --------------------------------------------------------------------
-# DATA LOADING
-# --------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# DATA LOADING AND INITIALIZATION
+# -----------------------------------------------------------------------------
 if "df" not in st.session_state:
-    # Create a container for the loading animation
     loading_container = st.empty()
-    
-    # Show loading animation in the container
     with loading_container:
         st.markdown("""
-        <div style="
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 2rem;
-            background: linear-gradient(135deg, rgba(29, 91, 121, 0.05), rgba(46, 139, 87, 0.05));
-            border-radius: 15px;
-            margin: 1rem 0;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-        ">
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem;
+                    background: linear-gradient(135deg, rgba(29, 91, 121, 0.05), rgba(46, 139, 87, 0.05));
+                    border-radius: 15px; margin: 1rem 0; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);">
             <div class="loading-pulse"></div>
-            <h2 style="
-                color: #1D5B79;
-                margin-top: 1rem;
-                font-size: 24px;
-                font-weight: 600;
-                text-align: center;
-            ">Loading Data from SQL Database...</h2>
-            <p style="
-                color: #666;
-                margin-top: 0.5rem;
-                font-size: 16px;
-                text-align: center;
-            ">Please wait while we fetch the latest safety records</p>
+            <h2 style="color: #1D5B79; margin-top: 1rem; font-size: 24px; font-weight: 600; text-align: center;">
+                Loading Data from SQL Database...
+            </h2>
+            <p style="color: #666; margin-top: 0.5rem; font-size: 16px; text-align: center;">
+                Please wait while we fetch the latest safety records
+            </p>
         </div>
-        
         <style>
-        .loading-pulse {
-            width: 64px;
-            height: 64px;
-            border: 5px solid #1D5B79;
-            border-radius: 50%;
-            position: relative;
-            animation: pulse 1.5s cubic-bezier(0.24, 0, 0.38, 1) infinite;
-        }
-        
-        .loading-pulse:before {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background: #2E8B57;
-            opacity: 0.6;
-            animation: pulse-inner 1.5s cubic-bezier(0.24, 0, 0.38, 1) infinite;
-        }
-        
-        @keyframes pulse {
-            0% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(29, 91, 121, 0.7);
-            }
-            70% {
-                transform: scale(1);
-                box-shadow: 0 0 0 15px rgba(29, 91, 121, 0);
-            }
-            100% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(29, 91, 121, 0);
-            }
-        }
-        
-        @keyframes pulse-inner {
-            0% {
-                transform: translate(-50%, -50%) scale(1);
+            .loading-pulse {{
+                width: 64px;
+                height: 64px;
+                border: 5px solid #1D5B79;
+                border-radius: 50%;
+                position: relative;
+                animation: pulse 1.5s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+            }}
+            .loading-pulse:before {{
+                content: '';
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: 40px;
+                height: 40px;
+                border-radius: 50%;
+                background: #2E8B57;
                 opacity: 0.6;
-            }
-            70% {
-                transform: translate(-50%, -50%) scale(1.2);
-                opacity: 0.2;
-            }
-            100% {
-                transform: translate(-50%, -50%) scale(1);
-                opacity: 0.6;
-            }
-        }
+                animation: pulse-inner 1.5s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+            }}
+            @keyframes pulse {{
+                0% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(29, 91, 121, 0.7); }}
+                70% {{ transform: scale(1); box-shadow: 0 0 0 15px rgba(29, 91, 121, 0); }}
+                100% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(29, 91, 121, 0); }}
+            }}
+            @keyframes pulse-inner {{
+                0% {{ transform: translate(-50%, -50%) scale(1); opacity: 0.6; }}
+                70% {{ transform: translate(-50%, -50%) scale(1.2); opacity: 0.2; }}
+                100% {{ transform: translate(-50%, -50%) scale(1); opacity: 0.6; }}
+            }}
         </style>
         """, unsafe_allow_html=True)
-        
-    # Try loading data directly from SQL
     try:
         df = load_data()
         if df is not None and not df.empty:
             st.session_state.df = df
-            # Clear the loading animation
             loading_container.empty()
-            # Show success message briefly
             success_container = st.empty()
             success_container.success("✅ Data loaded successfully!")
-            time.sleep(2)  # Show success message for 2 seconds
-            success_container.empty()  # Remove success message
+            time.sleep(2)
+            success_container.empty()
         else:
             loading_container.error(get_translation("no_data_warning", st.session_state.language))
     except Exception as e:
-            loading_container.error(f"Error loading data: {str(e)}")
+        loading_container.error(f"Error loading data: {str(e)}")
 
+# Make a copy of the data and ensure date conversion
 df = st.session_state.df.copy()
-df["Shift Date"] = pd.to_datetime(df["Shift Date"]).dt.date
+if "Shift Date" in df.columns:
+    df["Shift Date"] = pd.to_datetime(df["Shift Date"])
+    df["Shift_Date_only"] = df["Shift Date"].dt.date
 
-# --------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# HELPER FUNCTIONS FOR FILTERING & PREVIOUS PERIOD CALCULATIONS
+# -----------------------------------------------------------------------------
+def filter_by_sidebar(df: pd.DataFrame, selections: dict) -> pd.DataFrame:
+    """Filter the dataframe based on sidebar selections."""
+    if "dates" in selections:
+        dates = selections["dates"]
+        if isinstance(dates, datetime.date):
+            df = df[df["Shift_Date_only"] == dates]
+        else:
+            start_date, end_date = dates
+            df = df[(df["Shift_Date_only"] >= start_date) & (df["Shift_Date_only"] <= end_date)]
+    # Apply fleet group filter if provided
+    if selections.get("group", "All") != "All" and "Group" in df.columns:
+        df = df[df["Group"] == selections["group"]]
+    # Apply risk level filter if provided
+    if selections.get("risk_level", "All") != "All" and "Risk Level" in df.columns:
+        df = df[df["Risk Level"] == selections["risk_level"]]
+    return df
+
+def get_previous_period_df(df: pd.DataFrame, start_date: datetime.date, end_date: datetime.date, selections: dict) -> pd.DataFrame:
+    """Calculate the previous period dataframe based on the current date filter."""
+    current_period_days = (end_date - start_date).days if start_date != end_date else 1
+    prev_end_date = start_date - datetime.timedelta(days=1)
+    prev_start_date = prev_end_date - datetime.timedelta(days=current_period_days)
+    prev_df = df[(df["Shift_Date_only"] >= prev_start_date) & (df["Shift_Date_only"] <= prev_end_date)]
+    # Reapply fleet group and risk level filters for consistency
+    if selections.get("group", "All") != "All" and "Group" in prev_df.columns:
+        prev_df = prev_df[prev_df["Group"] == selections["group"]]
+    if selections.get("risk_level", "All") != "All" and "Risk Level" in prev_df.columns:
+        prev_df = prev_df[prev_df["Risk Level"] == selections["risk_level"]]
+    return prev_df
+
+# -----------------------------------------------------------------------------
 # SIDEBAR FILTERS
-# --------------------------------------------------------------------
-def render_simplified_sidebar(df: pd.DataFrame):
-    """Render a simplified sidebar with only logo and date range."""
+# -----------------------------------------------------------------------------
+def render_simplified_sidebar(df: pd.DataFrame) -> dict:
+    """Render a simplified sidebar with logo, date selection, fleet group and risk level."""
+    # Sidebar styling is applied via custom CSS from earlier.
     with st.sidebar:
-        # Logo container with styling
-        st.markdown("""
-            <div style="
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                padding: 1rem;
-                margin-bottom: 1.5rem;
-                background: linear-gradient(180deg, rgba(29, 91, 121, 0.05) 0%, rgba(46, 139, 87, 0.05) 100%);
-                border-radius: 15px;
-                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.03);
-            ">
-        """, unsafe_allow_html=True)
-        st.image(str(Path("assets/logo.png")), width=250)
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Date Range Section with enhanced styling
-        st.markdown("""
-            <div style="
-                background: white;
-                border-radius: 15px;
-                padding: 1.5rem;
-                margin: 0.5rem 0;
-                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.03);
-                border: 1px solid rgba(29, 91, 121, 0.1);
-            ">
-                <div style="
-                    color: #1D5B79;
-                    font-size: 1.2rem;
-                    font-weight: 600;
-                    margin-bottom: 1rem;
-                    padding-bottom: 0.5rem;
-                    border-bottom: 2px solid rgba(29, 91, 121, 0.1);
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                ">
-                    📅 """ + get_translation("date_range", st.session_state.language) + """
-                </div>
-        """, unsafe_allow_html=True)
-        
-        # Get min and max dates from DataFrame
-        min_date = pd.to_datetime(df["Shift Date"]).min().date()
-        max_date = pd.to_datetime(df["Shift Date"]).max().date()
-        
-        # Initialize session state for date order if not exists
-        if 'date_1' not in st.session_state:
-            st.session_state.date_1 = max_date
-        if 'date_2' not in st.session_state:
-            st.session_state.date_2 = max_date
-        
-        # Quick selection buttons
-        st.markdown("""
-            <div style="
-                margin-bottom: 15px;
-                padding: 10px 0;
-            ">
-                <div style="color: #1D5B79; margin-bottom: 10px; font-size: 0.9rem;">Quick Selection:</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
-        
-        def update_dates(start_date, end_date):
-            # Ensure dates are within valid range
-            start_date = max(min(start_date, max_date), min_date)
-            end_date = max(min(end_date, max_date), min_date)
-            st.session_state.date_1 = start_date
-            st.session_state.date_2 = end_date
-            st.rerun()
-        
-        # Last Week button
-        with col1:
-            last_week = max_date - datetime.timedelta(days=7)
-            last_week = max(last_week, min_date)  # Ensure last_week is not before min_date
-            if st.button("Last Week", use_container_width=True, key="last_week_btn"):
-                update_dates(last_week, max_date)
-        
-        # This Month button
-        with col2:
-            first_day = max_date.replace(day=1)
-            first_day = max(first_day, min_date)  # Ensure first_day is not before min_date
-            if st.button("This Month", use_container_width=True, key="this_month_btn"):
-                update_dates(first_day, max_date)
-            
-        # Date inputs
-        date_1 = st.date_input(
-            "First Date",
-            value=st.session_state.date_1,
-            min_value=min_date,
-            max_value=max_date,
-            key="date_input_1"
+        container = st.container()
+        with container:
+            st.markdown('<div class="sidebar-logo">', unsafe_allow_html=True)
+            st.image(str(Path("assets/logo.png")), width=200)
+            st.markdown('</div>', unsafe_allow_html=True)
+    
+        # Date range: get min and max date from data
+        min_date = df["Shift_Date_only"].min()
+        max_date = df["Shift_Date_only"].max()
+    
+        st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-header">📅 ' + get_translation("Date Selection", st.session_state.language) + '</div>', unsafe_allow_html=True)
+    
+        # Date selection type
+        date_selection_type = st.radio(
+            get_translation("Select Date Type", st.session_state.language),
+            [get_translation("Date Range", st.session_state.language), get_translation("Single Date", st.session_state.language)],
+            key="date_selection_type"
         )
-        
-        date_2 = st.date_input(
-            "Second Date",
-            value=st.session_state.date_2,
-            min_value=min_date,
-            max_value=max_date,
-            key="date_input_2"
-        )
-        
-        # Store the dates in session state
-        st.session_state.date_1 = date_1
-        st.session_state.date_2 = date_2
-        
-        # Automatically arrange dates in chronological order
-        start_date = min(date_1, date_2)
-        end_date = max(date_1, date_2)
-        dates = (start_date, end_date)
-        
-        # Display the arranged dates
-        st.markdown(f"""
-            <div style="
-                margin-top: 15px;
-                padding: 10px;
-                background: rgba(29, 91, 121, 0.05);
-                border-radius: 8px;
-                font-size: 0.9rem;
-            ">
-                <div style="color: #1D5B79; margin-bottom: 5px;">Selected Range:</div>
-                <div>Start: {start_date}</div>
-                <div>End: {end_date}</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
+        if date_selection_type == get_translation("Single Date", st.session_state.language):
+            selected_date = st.date_input(get_translation("Select Date", st.session_state.language), value=max_date, min_value=min_date, max_value=max_date, key="single_date")
+            start_date = end_date = selected_date
+        else:
+            time_period = st.selectbox(get_translation("Select Time Period", st.session_state.language),
+                                       ["Last 7 Days", "Last 30 Days", "Last 90 Days", "Year to Date", "Custom"],
+                                       key="sidebar_time_period")
+            today = datetime.datetime.now().date()
+            if time_period == "Last 7 Days":
+                start_date, end_date = today - datetime.timedelta(days=7), today
+            elif time_period == "Last 30 Days":
+                start_date, end_date = today - datetime.timedelta(days=30), today
+            elif time_period == "Last 90 Days":
+                start_date, end_date = today - datetime.timedelta(days=90), today
+            elif time_period == "Year to Date":
+                start_date, end_date = datetime.date(today.year, 1, 1), today
+            else:
+                start_date = st.date_input(get_translation("Start Date", st.session_state.language), value=max(min_date, max_date - datetime.timedelta(days=30)), min_value=min_date, max_value=max_date, key="sidebar_custom_start_date")
+                end_date = st.date_input(get_translation("End Date", st.session_state.language), value=max_date, min_value=min_date, max_value=max_date, key="sidebar_custom_end_date")
+                if start_date > end_date:
+                    start_date, end_date = end_date, start_date
         st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Add custom styling
-        st.markdown("""
-        <style>
-            /* Remove default sidebar padding and background */
-            [data-testid="stSidebar"] {
-                background-color: white !important;
-                border-right: 1px solid rgba(49, 51, 63, 0.1) !important;
-                padding-top: 0 !important;
-            }
-            
-            /* Date Input Styling */
-            .stDateInput > div {
-                background: white;
-                border-radius: 10px !important;
-                border: 1px solid rgba(29, 91, 121, 0.2) !important;
-                padding: 0.25rem !important;
-                width: 100% !important;
-            }
-            
-            .stDateInput > div:hover {
-                border-color: #1D5B79 !important;
-                box-shadow: 0 0 0 1px rgba(29, 91, 121, 0.2) !important;
-            }
-            
-            .stDateInput > div > div {
-                background: transparent !important;
-            }
-            
-            .stDateInput input {
-                color: #1D5B79 !important;
-                font-weight: 500 !important;
-            }
-            
-            /* Quick Selection Button Styling */
-            .stButton > button {
-                background: linear-gradient(135deg, #1D5B79, #2E8B57) !important;
-                color: white !important;
-                border: none !important;
-                padding: 0.5rem !important;
-                font-size: 0.9rem !important;
-                font-weight: 500 !important;
-                transition: all 0.3s ease !important;
-                width: 100% !important;
-            }
-            
-            .stButton > button:hover {
-                opacity: 0.9 !important;
-                transform: translateY(-2px) !important;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important;
-            }
-            
-            /* Remove any extra padding from the sidebar */
-            section[data-testid="stSidebar"] > div {
-                padding-top: 0 !important;
-            }
-            
-            /* Ensure the image container has no margins or padding */
-            [data-testid="stImage"] {
-                margin: 0 auto !important;
-                padding: 0 !important;
-                display: block !important;
-            }
-            
-            /* Custom scrollbar for sidebar */
-            [data-testid="stSidebar"] {
-                scrollbar-width: thin;
-                scrollbar-color: rgba(29, 91, 121, 0.3) transparent;
-            }
-            
-            [data-testid="stSidebar"]::-webkit-scrollbar {
-                width: 6px;
-            }
-            
-            [data-testid="stSidebar"]::-webkit-scrollbar-track {
-                background: transparent;
-            }
-            
-            [data-testid="stSidebar"]::-webkit-scrollbar-thumb {
-                background-color: rgba(29, 91, 121, 0.3);
-                border-radius: 3px;
-            }
-            
-            /* Hide date input label */
-            .stDateInput label {
-                display: none !important;
-            }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        return {"dates": dates}
+    
+        # Fleet group filter
+        st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-header">🚚 ' + get_translation("Select Fleet Group", st.session_state.language) + '</div>', unsafe_allow_html=True)
+        if "Group" in df.columns:
+            available_groups = ["All"] + sorted(df["Group"].unique().tolist())
+            selected_group = st.selectbox("", available_groups, key="sidebar_selected_group")
+        else:
+            selected_group = "All"
+            st.warning(get_translation("No Group information available in the data", st.session_state.language))
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+        # Risk level filter
+        st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-header">⚠️ ' + get_translation("Select Risk Level", st.session_state.language) + '</div>', unsafe_allow_html=True)
+        risk_levels = ["All", "Extreme", "High", "Medium", "Low"]
+        selected_risk = st.selectbox("", risk_levels, key="sidebar_selected_risk")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Return the selections in a dictionary
+    return {
+        "date_type": "single" if date_selection_type == get_translation("Single Date", st.session_state.language) else "range",
+        "dates": start_date if date_selection_type == get_translation("Single Date", st.session_state.language) else (start_date, end_date),
+        "group": selected_group,
+        "risk_level": selected_risk
+    }
 
-# Replace the existing sidebar code with the simplified version
-# --------------------------------------------------------------------
-# SIDEBAR FILTERS
-# --------------------------------------------------------------------
-with st.empty():
-    df = get_shared_data()
-    if df.empty:
-        st.error("⚠️ No data available. Please check the data source.")
-        st.stop()
-
-# Apply simplified sidebar
 selections = render_simplified_sidebar(df)
-filtered_df = filter_data(df, selections)
-
-# Store selections in session state for other components
 st.session_state.selections = selections
+filtered_df = filter_by_sidebar(df, selections)
+dashboard_filtered_df = filtered_df.copy()
 
-# --------------------------------------------------------------------
-# KPI CARDS
-# --------------------------------------------------------------------
-st.markdown(f"""
-<div style="
-    background: linear-gradient(135deg, rgba(29, 91, 121, 0.05), rgba(46, 139, 87, 0.05));
-    padding: 1.5rem;
-    border-radius: 12px;
-    margin: 2rem 0;
-    border-left: 5px solid #1D5B79;
-">
-    <h2 style="
-        font-size: 36px;
-        font-weight: 700;
-        color: #1D5B79;
-        margin: 0;
-        padding: 0;
-        letter-spacing: 0.5px;
-        font-family: 'Segoe UI', Arial, sans-serif;
-    ">📊 {get_translation("performance_overview", st.session_state.language)}</h2>
-</div>
-""", unsafe_allow_html=True)
+# Calculate previous period dataframe (for KPI comparisons)
+if selections.get("dates"):
+    if isinstance(selections["dates"], tuple):
+        start_date, end_date = selections["dates"]
+    else:
+        start_date = end_date = selections["dates"]
+    prev_df = get_previous_period_df(df, start_date, end_date, selections)
+else:
+    prev_df = df.copy()
 
-# Calculate metrics with improved logic
-overspeed_threshold = 6  # Base threshold for violations
-events_per_day_threshold = 1  # Threshold for high risk drivers (events per day) - Changed from 3 to 1
-
-# Clean driver names and get total unique drivers (excluding empty/unnamed) - No date filter
+# -----------------------------------------------------------------------------
+# CALCULATE KPI METRICS
+# -----------------------------------------------------------------------------
+# Clean driver names and count unique drivers
 df["Driver"] = df["Driver"].fillna("").astype(str).str.strip()
 total_unique_drivers = df[df["Driver"] != ""]["Driver"].nunique()
+overspeed_threshold = 6
+events_per_day_threshold = 1
 
-# Get filtered dataframe based on date range
-if "selections" in st.session_state and "dates" in st.session_state.selections:
-    dates = st.session_state.selections["dates"]
-    df["Shift_Date_only"] = pd.to_datetime(df["Shift Date"]).dt.date
-    
-    # Handle single date selection
-    if isinstance(dates, datetime.date):
-        # If single date is selected
-        filtered_df = df[df["Shift_Date_only"] == dates]
-    else:
-        # If date range is selected (tuple/list)
-        start_date, end_date = dates
-        filtered_df = df[
-            (df["Shift_Date_only"] >= start_date) &
-            (df["Shift_Date_only"] <= end_date)
-        ]
-else:
-    filtered_df = df
-
-# Calculate high risk drivers (more than 3 overspeeding events per day)
-# First, get count of overspeeding events per driver per day
-driver_daily_events = filtered_df[
-    (filtered_df["Driver"] != "") & 
-    (filtered_df["Overspeeding Value"] >= overspeed_threshold)
-].groupby(["Driver", "Shift_Date_only"]).size().reset_index(name="daily_events")
-
-# Identify drivers who have more than 3 events on any day
-high_risk_drivers = driver_daily_events[
-    driver_daily_events["daily_events"] > events_per_day_threshold
-]["Driver"].nunique()
-
-# Calculate percentage from total unique drivers
-high_risk_pct = (high_risk_drivers / total_unique_drivers * 100) if total_unique_drivers > 0 else 0
-
-# Get total number of drivers who had events in this period for context
-active_drivers = filtered_df[
-    (filtered_df["Driver"] != "") & 
-    (filtered_df["Overspeeding Value"] >= overspeed_threshold)
-]["Driver"].nunique()
-
-# Total violations in selected date range
+# Count overspeeding incidents (>= threshold) in filtered data
 total_violations = len(filtered_df[filtered_df["Overspeeding Value"] >= overspeed_threshold])
 
-# Create KPI cards in three columns
-col1, col2, col3 = st.columns(3)
+# Count high risk drivers (more than a defined threshold per day)
+driver_daily_events = filtered_df[
+    (filtered_df["Driver"] != "") &
+    (filtered_df["Overspeeding Value"] >= overspeed_threshold)
+].groupby(["Driver", "Shift_Date_only"]).size().reset_index(name="daily_events")
+high_risk_drivers = driver_daily_events[driver_daily_events["daily_events"] > events_per_day_threshold]["Driver"].nunique()
+high_risk_pct = (high_risk_drivers / total_unique_drivers * 100) if total_unique_drivers > 0 else 0
+
+# Count active drivers (with at least one overspeeding event)
+active_drivers = filtered_df[
+    (filtered_df["Driver"] != "") &
+    (filtered_df["Overspeeding Value"] >= overspeed_threshold)
+]["Driver"].nunique()
+
+# -----------------------------------------------------------------------------
+# DISPLAY KPI CARDS
+# -----------------------------------------------------------------------------
+col1, col2 = st.columns(2)
 with col1:
     st.markdown(f"""
     <div class="kpi-card blue">
@@ -661,19 +375,7 @@ with col1:
         <div class="kpi-value">{total_unique_drivers}</div>
     </div>
     """, unsafe_allow_html=True)
-
 with col2:
-    st.markdown(f"""
-    <div class="kpi-card red">
-        <div class="kpi-title">{get_translation("high_risk_drivers", st.session_state.language)}</div>
-        <div class="kpi-value">{high_risk_pct:.1f}%</div>
-        <div style="font-size: 0.8rem; color: #666; text-align: center; margin-top: 5px;">
-            {high_risk_drivers} out of {total_unique_drivers} drivers
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col3:
     st.markdown(f"""
     <div class="kpi-card green">
         <div class="kpi-title">{get_translation("total_over_speeding_violations", st.session_state.language)}</div>
@@ -681,58 +383,174 @@ with col3:
     </div>
     """, unsafe_allow_html=True)
 
-# --------------------------------------------------------------------
-# DRIVER PERFORMANCE CHARTS
-# --------------------------------------------------------------------
+# Additional KPI cards (Total Incidents, High Risk Drivers, Avg Incidents/Driver, Extreme Risk Events)
+kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+with kpi1:
+    total_incidents = len(filtered_df)
+    if not prev_df.empty:
+        prev_incidents = len(prev_df)
+        percent_change = ((total_incidents - prev_incidents) / prev_incidents * 100) if prev_incidents > 0 else 0
+        color_class = 'red' if percent_change > 0 else 'green' if percent_change < 0 else 'blue'
+    else:
+        color_class = 'blue'
+    st.markdown(f"""
+    <div class="kpi-card {color_class}">
+        <div class="kpi-title">{get_translation("Total Incidents", st.session_state.language)}</div>
+        <div class="kpi-value">{total_incidents:,}</div>
+    </div>
+    """, unsafe_allow_html=True)
+with kpi2:
+    if "Driver" in filtered_df.columns and "Overspeeding Value" in filtered_df.columns:
+        high_risk_df = filtered_df[filtered_df["Overspeeding Value"] >= overspeed_threshold]
+        high_risk_count = high_risk_df["Driver"].nunique()
+        st.markdown(f"""
+        <div class="kpi-card red">
+            <div class="kpi-title">{get_translation("High Risk Drivers", st.session_state.language)}</div>
+            <div class="kpi-value">{high_risk_count:,}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="kpi-card red">
+            <div class="kpi-title">{get_translation("High Risk Drivers", st.session_state.language)}</div>
+            <div class="kpi-value">N/A</div>
+        </div>
+        """, unsafe_allow_html=True)
+with kpi3:
+    if "Driver ID" in df.columns:
+        total_drivers_filtered = filtered_df["Driver ID"].nunique()
+        avg_incidents = total_incidents / total_drivers_filtered if total_drivers_filtered > 0 else 0
+        if "Driver ID" in prev_df.columns:
+            prev_drivers = prev_df["Driver ID"].nunique()
+            prev_avg = len(prev_df) / prev_drivers if prev_drivers > 0 else 0
+            percent_change = ((avg_incidents - prev_avg) / prev_avg * 100) if prev_avg > 0 else 0
+            color_class = 'red' if percent_change > 0 else 'green' if percent_change < 0 else 'blue'
+        else:
+            color_class = 'blue'
+        st.markdown(f"""
+        <div class="kpi-card {color_class}">
+            <div class="kpi-title">{get_translation("Avg Incidents/Driver", st.session_state.language)}</div>
+            <div class="kpi-value">{avg_incidents:.1f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="kpi-card blue">
+            <div class="kpi-title">{get_translation("Avg Incidents/Driver", st.session_state.language)}</div>
+            <div class="kpi-value">N/A</div>
+        </div>
+        """, unsafe_allow_html=True)
+with kpi4:
+    if "Overspeeding Value" in filtered_df.columns:
+        extreme_incidents = filtered_df[filtered_df["Overspeeding Value"] >= 20].shape[0]
+        st.markdown(f"""
+        <div class="kpi-card red">
+            <div class="kpi-title">{get_translation("Extreme Risk Events", st.session_state.language)}</div>
+            <div class="kpi-value">{extreme_incidents}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="kpi-card red">
+            <div class="kpi-title">{get_translation("Extreme Risk Events", st.session_state.language)}</div>
+            <div class="kpi-value">N/A</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+# -----------------------------------------------------------------------------
+# PERFORMANCE CHARTS SECTION
+# -----------------------------------------------------------------------------
+render_chart_title("performance_charts")
+col_chart1, col_chart2 = st.columns(2)
+with col_chart1:
+    if "Shift Date" in filtered_df.columns:
+        time_trend = filtered_df.groupby(pd.Grouper(key="Shift Date", freq="D")).size().reset_index(name="count")
+        fig_line = px.line(
+            time_trend,
+            x="Shift Date",
+            y="count",
+            labels={"Shift Date": get_translation("Date", st.session_state.language),
+                    "count": get_translation("Number of Incidents", st.session_state.language)},
+            title=get_translation("Daily Incident Trend", st.session_state.language)
+        )
+        fig_line.update_traces(line=dict(width=3, color="#1D5B79"), mode="lines+markers",
+                                 marker=dict(size=8, line=dict(width=1, color="#2E8B57")))
+        fig_line.update_layout(height=400, template="plotly_white",
+                               title_font=dict(size=20, family="Arial", color="#2a3f5f"),
+                               xaxis_title=get_translation("Date", st.session_state.language),
+                               yaxis_title=get_translation("Number of Incidents", st.session_state.language),
+                               plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                               xaxis=dict(showgrid=True, gridcolor='rgba(200, 200, 200, 0.2)'),
+                               yaxis=dict(showgrid=True, gridcolor='rgba(200, 200, 200, 0.2)'))
+        st.plotly_chart(fig_line, use_container_width=True)
+    else:
+        st.warning(get_translation("Date information is not available in the data", st.session_state.language))
+with col_chart2:
+    if "Overspeeding Value" in filtered_df.columns:
+        # Create overspeeding severity categories
+        filtered_df['Speed Category'] = pd.cut(
+            filtered_df['Overspeeding Value'], 
+            bins=[0, 6, 10, 15, 20, float('inf')],
+            labels=['0-5 km/h', '6-10 km/h', '11-15 km/h', '16-20 km/h', '20+ km/h'],
+            include_lowest=True
+        )
+        speed_counts = filtered_df['Speed Category'].value_counts().reset_index()
+        speed_counts.columns = ["Speed Category", "Count"]
+        speed_colors = {
+            "0-5 km/h": "#90EE90",
+            "6-10 km/h": "#FFD700",
+            "11-15 km/h": "#FFA500",
+            "16-20 km/h": "#FF4500",
+            "20+ km/h": "#FF0000"
+        }
+        fig_pie = px.pie(
+            speed_counts,
+            values="Count",
+            names="Speed Category",
+            title=get_translation("Incidents by Overspeeding Severity", st.session_state.language),
+            color="Speed Category",
+            color_discrete_map=speed_colors,
+            hole=0.4
+        )
+        fig_pie.update_traces(textinfo="percent+label", textfont_size=14,
+                                marker=dict(line=dict(color="#FFFFFF", width=2)))
+        fig_pie.update_layout(height=400, template="plotly_white",
+                              title_font=dict(size=20, family="Arial", color="#2a3f5f"),
+                              legend_title=get_translation("Overspeeding Severity", st.session_state.language),
+                              plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
+        st.plotly_chart(fig_pie, use_container_width=True)
+    else:
+        st.warning(get_translation("Overspeeding value information is not available in the data", st.session_state.language))
+
+# -----------------------------------------------------------------------------
+# TOP RISKY DRIVERS & WARNING LETTERS CHARTS
+# -----------------------------------------------------------------------------
 render_glow_line()
 render_chart_title("top_10_risky_drivers")
-
-# Top 10 Drivers Chart
 driver_stats = filtered_df.groupby("Driver")["Overspeeding Value"].mean().reset_index()
 top_drivers = driver_stats.sort_values("Overspeeding Value", ascending=False).head(10)
-fig1 = px.bar(top_drivers, x="Driver", y="Overspeeding Value", 
-             title=get_translation("top_10_risky_drivers", st.session_state.language),
-             color="Overspeeding Value", color_continuous_scale="OrRd")
-st.plotly_chart(fig1, use_container_width=True)
+fig_bar = px.bar(top_drivers, x="Driver", y="Overspeeding Value", 
+                 title=get_translation("top_10_risky_drivers", st.session_state.language),
+                 color="Overspeeding Value", color_continuous_scale="OrRd")
+st.plotly_chart(fig_bar, use_container_width=True)
 
-# --------------------------------------------------------------------
-# TOP 15 DRIVERS BY WARNING LETTERS
-# --------------------------------------------------------------------
+# Top 15 Drivers by Warning Letters
 render_glow_line()
 st.markdown(f"""
-<div style="
-    background: linear-gradient(135deg, rgba(29, 91, 121, 0.05), rgba(46, 139, 87, 0.05));
-    padding: 1.5rem;
-    border-radius: 12px;
-    margin: 2rem 0;
-    border-left: 5px solid #1D5B79;
-">
-    <h2 style="
-        font-size: 36px;
-        font-weight: 700;
-        color: #1D5B79;
-        margin: 0;
-        padding: 0;
-        letter-spacing: 0.5px;
-        font-family: 'Segoe UI', Arial, sans-serif;
-    ">🚗 {get_translation("top_15_drivers_with_max_warning_letters", st.session_state.language)}</h2>
+<div style="background: linear-gradient(135deg, rgba(29, 91, 121, 0.05), rgba(46, 139, 87, 0.05));
+     padding: 1.5rem; border-radius: 12px; margin: 2rem 0; border-left: 5px solid #1D5B79;">
+    <h2 style="font-size: 36px; font-weight: 700; color: #1D5B79; margin: 0; letter-spacing: 0.5px;
+        font-family: 'Segoe UI', Arial, sans-serif;">
+        🚗 {get_translation("top_15_drivers_with_max_warning_letters", st.session_state.language)}
+    </h2>
 </div>
 """, unsafe_allow_html=True)
-
-# Ensure "Driver" column is cleaned and remove blank names
+# Filter valid drivers and remove duplicate warning letters per day/shift
 filtered_df["Driver"] = filtered_df["Driver"].fillna("").astype(str).str.strip()
-valid_drivers_df = filtered_df[(filtered_df["Overspeeding Value"] >= 6) & (filtered_df["Driver"] != "")]
-
-# Ensure unique warning letters per (Driver, Shift Date, Shift)
+valid_drivers_df = filtered_df[(filtered_df["Overspeeding Value"] >= overspeed_threshold) & (filtered_df["Driver"] != "")]
 letters_df = valid_drivers_df.drop_duplicates(subset=["Driver", "Shift Date", "Shift"])
-
-# Group by Driver and count warning letters
 top_letters = letters_df.groupby("Driver").size().reset_index(name="Letters")
-
-# Sort by count and take top 15
 top_letters = top_letters.sort_values("Letters", ascending=False).head(15)
-
-# Generate the bar chart with a stylish color palette
 fig_top15 = px.bar(
     top_letters,
     x="Driver",
@@ -741,356 +559,247 @@ fig_top15 = px.bar(
     color_continuous_scale="oranges",
     title=get_translation("top_15_drivers_by_warning_letters", st.session_state.language),
     text="Letters",
-    height=500  # Increased height
+    height=500
 )
-
-# Improve layout
-fig_top15.update_traces(
-    texttemplate='%{text}', 
-    textposition='outside',
-    textfont=dict(size=12)  # Adjusted text size
-)
-
+fig_top15.update_traces(texttemplate='%{text}', textposition='outside', textfont=dict(size=12))
 fig_top15.update_layout(
-    title=dict(
-        text=get_translation("top_15_drivers_by_warning_letters", st.session_state.language),
-        font=dict(size=24, family="Arial", weight="bold"),
-        y=0.95
-    ),
-    xaxis_title=dict(
-        text=get_translation("driver", st.session_state.language),
-        font=dict(size=16, family="Arial")
-    ),
-    yaxis_title=dict(
-        text=get_translation("warning_letters", st.session_state.language),
-        font=dict(size=16, family="Arial")
-    )
+    title_font=dict(size=24, family="Arial", weight="bold"), yaxis_title=get_translation("warning_letters", st.session_state.language),
+    xaxis_title=get_translation("driver", st.session_state.language),
+    xaxis=dict(title_font=dict(size=14), tickfont=dict(size=12)),
+    yaxis=dict(title_font=dict(size=14), tickfont=dict(size=12))
 )
-
-# Update axis properties
-fig_top15.update_xaxes(
-    title_font=dict(size=14),
-    tickfont=dict(size=12)
-)
-fig_top15.update_yaxes(
-    title_font=dict(size=14),
-    tickfont=dict(size=12)
-)
-
 st.plotly_chart(fig_top15, use_container_width=True)
 
-# --------------------------------------------------------------------
-# WARNING LETTERS TABLE (ROW-WISE)
-# --------------------------------------------------------------------
+# Warning Letters Summary Table
 st.markdown(f"""
-<div style="
-    background: linear-gradient(135deg, rgba(29, 91, 121, 0.05), rgba(46, 139, 87, 0.05));
-    padding: 1.5rem;
-    border-radius: 12px;
-    margin: 2rem 0;
-    border-left: 5px solid #2E8B57;
-">
-    <h2 style="
-        font-size: 36px;
-        font-weight: 700;
-        color: #2E8B57;
-        margin: 0;
-        padding: 0;
-        letter-spacing: 0.5px;
-        font-family: 'Segoe UI', Arial, sans-serif;
-    ">📝 {get_translation("warning_letters_summary", st.session_state.language)}</h2>
+<div style="background: linear-gradient(135deg, rgba(29, 91, 121, 0.05), rgba(46, 139, 87, 0.05));
+     padding: 1.5rem; border-radius: 12px; margin: 2rem 0; border-left: 5px solid #2E8B57;">
+    <h2 style="font-size: 36px; font-weight: 700; color: #2E8B57; margin: 0; letter-spacing: 0.5px;
+        font-family: 'Segoe UI', Arial, sans-serif;">
+        📝 {get_translation("warning_letters_summary", st.session_state.language)}
+    </h2>
 </div>
 """, unsafe_allow_html=True)
-
 if not filtered_df.empty:
-    # Only show rows with Overspeed >= 6
-    warnings = filtered_df[filtered_df["Overspeeding Value"] >= 6]
-    
-    # Group by the original English column names
-    warning_counts = (
-        warnings.groupby(["Group", "Shift"])
-        .size()
-        .reset_index(name="Count")
-    )
-    
-    # Rename columns for display using your translation function
-    warning_counts.rename(
-        columns={
-            "Group": get_translation("group", st.session_state.language),
-            "Shift": get_translation("shift", st.session_state.language),
-            "Count": get_translation("warnings", st.session_state.language)
-        },
-        inplace=True
-    )
-
-    # Now that columns are renamed, set them as the index for display
+    warnings_df = filtered_df[filtered_df["Overspeeding Value"] >= overspeed_threshold]
+    warning_counts = warnings_df.groupby(["Group", "Shift"]).size().reset_index(name="Count")
+    warning_counts.rename(columns={
+        "Group": get_translation("group", st.session_state.language),
+        "Shift": get_translation("shift", st.session_state.language),
+        "Count": get_translation("warnings", st.session_state.language)
+    }, inplace=True)
     warning_display = warning_counts.set_index([get_translation("group", st.session_state.language), get_translation("shift", st.session_state.language)]).T
     st.dataframe(warning_display, use_container_width=True)
-
 else:
     st.info(get_translation("no_warnings_selected_period", st.session_state.language))
 
+# -----------------------------------------------------------------------------
+# MAILMERGE & PDF GENERATION FUNCTIONS
+# -----------------------------------------------------------------------------
 def mailmerge_multiple_records(records, template_path="assets/warning_letter.docx"):
     document = MailMerge(template_path)
     dict_list = []
-    
     for _, row in records.iterrows():
-            start_time_raw = row.get("Start Time", "")
-            try:
-                dt_obj = pd.to_datetime(start_time_raw)
-                incident_date = dt_obj.strftime("%Y-%m-%d")
-                incident_time = dt_obj.strftime("%H:%M:%S")
-            except Exception:
-                incident_date = str(start_time_raw)
-                incident_time = str(start_time_raw)
-            
-            dict_item = {
-                "Driver_ID": str(row.get("Driver ID", "N/A")),
+        start_time_raw = row.get("Start Time", "")
+        try:
+            dt_obj = pd.to_datetime(start_time_raw)
+            incident_date = dt_obj.strftime("%Y-%m-%d")
+            incident_time = dt_obj.strftime("%H:%M:%S")
+        except Exception:
+            incident_date = str(start_time_raw)
+            incident_time = str(start_time_raw)
+        dict_item = {
+            "Driver_ID": str(row.get("Driver ID", "N/A")),
             "Driver": str(row.get("Driver", "Unknown Driver")).strip(),
-                "Group": str(row.get("Group", "Unknown Department")),
-                "Start_Time": incident_time,
-                "Shift_Date": incident_date,
-                "Area": str(row.get("Area", "Unknown Location")),
-                "Overspeeding_Value": str(row.get("Overspeeding Value", 0)),
-                "Speed_Limit": str(row.get("Speed Limit", "N/A")),
-                "Shift": str(row.get("Shift", "N/A")),
+            "Group": str(row.get("Group", "Unknown Department")),
+            "Start_Time": incident_time,
+            "Shift_Date": incident_date,
+            "Area": str(row.get("Area", "Unknown Location")),
+            "Overspeeding_Value": str(row.get("Overspeeding Value", 0)),
+            "Speed_Limit": str(row.get("Speed Limit", "N/A")),
+            "Shift": str(row.get("Shift", "N/A")),
             "Max_Speedkmh": str(row.get("Max Speed(Km/h)", "N/A")),
-                "License_Plate": str(row.get("License Plate", "N/A"))
-            }
-            dict_list.append(dict_item)
-    
+            "License_Plate": str(row.get("License Plate", "N/A"))
+        }
+        dict_list.append(dict_item)
     if dict_list:
         document.merge_pages(dict_list)
     return document
 
 def convert_mailmerged_doc_to_pdf(mailmerge_doc):
-    """
-    Convert a mailmerged document to PDF format.
-    
-    Args:
-        mailmerge_doc: The mailmerge document object to convert
-        
-    Returns:
-        bytes: The PDF content as bytes
-    """
-    # Create unique temporary file names using uuid
     temp_id = str(uuid.uuid4())
     output_path_docx = os.path.join(tempfile.gettempdir(), f"warning_letter_{temp_id}.docx")
     output_path_pdf = os.path.join(tempfile.gettempdir(), f"warning_letter_{temp_id}.pdf")
-    
     try:
-        # Write the document to temporary DOCX file
         mailmerge_doc.write(output_path_docx)
-        
-        # Initialize COM for PDF conversion
         pythoncom.CoInitialize()
         try:
-            # Convert DOCX to PDF
             docx2pdf_convert(output_path_docx, output_path_pdf)
         finally:
-            # Always uninitialize COM
             pythoncom.CoUninitialize()
-        
-        # Read and return the PDF content
         with open(output_path_pdf, "rb") as f:
             pdf_bytes = f.read()
         return pdf_bytes
-    
     finally:
-        # Clean up temporary files
-        try:
-            if os.path.exists(output_path_docx):
-                os.remove(output_path_docx)
-            if os.path.exists(output_path_pdf):
-                os.remove(output_path_pdf)
-        except Exception as e:
-            st.warning(f"Failed to clean up temporary files: {e}")
+        for path in [output_path_docx, output_path_pdf]:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except Exception as e:
+                st.warning(f"Failed to clean up temporary files: {e}")
 
+# -----------------------------------------------------------------------------
+# OVERSPEEDING WARNING LETTERS SECTION
+# -----------------------------------------------------------------------------
 def overspeeding_warning_letters(df: pd.DataFrame):
     st.markdown(f"""
-<div style="
-    background: linear-gradient(135deg, rgba(29, 91, 121, 0.05), rgba(46, 139, 87, 0.05));
-    padding: 1.5rem;
-    border-radius: 12px;
-    margin: 2rem 0;
-    border-left: 5px solid #1D5B79;
-">
-    <h2 style="
-        font-size: 36px;
-        font-weight: 700;
-        color: #1D5B79;
-        margin: 0;
-        padding: 0;
-        letter-spacing: 0.5px;
-        font-family: 'Segoe UI', Arial, sans-serif;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    ">⚠️ {get_translation("overspeeding_violations", st.session_state.language)}</h2>
-</div>
-""", unsafe_allow_html=True)
-
+    <div style="background: linear-gradient(135deg, rgba(29, 91, 121, 0.05), rgba(46, 139, 87, 0.05));
+         padding: 1.5rem; border-radius: 12px; margin: 2rem 0; border-left: 5px solid #1D5B79;">
+        <h2 style="font-size: 36px; font-weight: 700; color: #1D5B79; margin: 0; letter-spacing: 0.5px;
+            font-family: 'Segoe UI', Arial, sans-serif; display: flex; align-items: center; gap: 10px;">
+            ⚠️ {get_translation("overspeeding_violations", st.session_state.language)}
+        </h2>
+    </div>
+    """, unsafe_allow_html=True)
     if "selections" not in st.session_state:
         st.error("No sidebar selections found!")
         return
-
     selections = st.session_state["selections"]
-    dates = selections.get("dates", None)
-    
-    # Handle single date selection
-    if isinstance(dates, datetime.date):
-        start_date = end_date = dates
-        date_display = f"**Selected Date:** {start_date}"
+    if selections.get("date_type") == "single":
+        selected_date = selections.get("dates")
+        date_display = f"**Selected Date:** {selected_date}"
+        start_date = end_date = selected_date
     else:
-        # Handle date range
-        start_date, end_date = dates
+        start_date, end_date = selections.get("dates", (None, None))
         date_display = f"**Selected Date Range:** {start_date} → {end_date}"
-        
-    if not dates:
+    if not start_date or not end_date:
         st.error("Please select a date in the sidebar.")
         return
-
     st.info(date_display)
-
-    overspeed_threshold = st.number_input(
-        get_translation("overspeeding_threshold"),
-        min_value=1,
-        value=6,
-        key="overspeed_threshold_warning"
-    )
-
+    overspeed_threshold_input = st.number_input(get_translation("overspeeding_threshold", st.session_state.language),
+                                                 min_value=1, value=6, key="overspeed_threshold_warning")
     required_cols = ["Shift Date", "Overspeeding Value", "Driver", "License Plate", "Shift", "Start Time"]
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
         st.error(f"Missing required columns: {missing_cols}")
         st.stop()
-
     df["Shift_Date_only"] = pd.to_datetime(df["Shift Date"]).dt.date
     df["Driver"] = df["Driver"].fillna("").astype(str).str.strip()
     df["License Plate"] = df["License Plate"].fillna("").astype(str).str.strip()
-
-    filtered = df[
-        (df["Shift_Date_only"] == start_date if isinstance(dates, datetime.date)
-         else (df["Shift_Date_only"] >= start_date) & (df["Shift_Date_only"] <= end_date)) &
-        (df["Overspeeding Value"] >= overspeed_threshold)
-    ]
-
-    if st.button(get_translation("check_over_speeding")):
-        # Don't display the dataframe, just update the session state
+    # Apply date filtering based on whether a single date or a range was selected
+    if start_date == end_date:
+        filtered = df[df["Shift_Date_only"] == start_date]
+    else:
+        filtered = df[(df["Shift_Date_only"] >= start_date) & (df["Shift_Date_only"] <= end_date)]
+    filtered = filtered[filtered["Overspeeding Value"] >= overspeed_threshold_input]
+    if st.button(get_translation("check_over_speeding", st.session_state.language)):
         st.session_state["named_drivers"] = filtered[filtered["Driver"] != ""].drop_duplicates(subset=["Driver", "Shift_Date_only"])
-        st.session_state["unnamed_drivers"] = filtered[filtered["Driver"] == ""].drop_duplicates(
-            subset=["License Plate", "Shift_Date_only", "Shift"]
-        )
+        st.session_state["unnamed_drivers"] = filtered[filtered["Driver"] == ""].drop_duplicates(subset=["License Plate", "Shift_Date_only", "Shift"])
         st.session_state["show_summary"] = True
-    
-    # Always show summary if data is available
     if "show_summary" in st.session_state:
         named_drivers = st.session_state.get("named_drivers", pd.DataFrame())
         unnamed_drivers = st.session_state.get("unnamed_drivers", pd.DataFrame())
-
-        total_violations = len(filtered)
+        total_violations_filtered = len(filtered)
         named_count = len(named_drivers)
         unnamed_count = len(unnamed_drivers)
         total_letters = named_count + unnamed_count
-
         st.markdown("""
             <style>
-    .summary-container {
-        background: white !important;
-        padding: 25px !important;
-        border-radius: 12px !important;
-        border: 2px solid rgba(46, 139, 87, 0.1) !important;
-        margin: 25px 0 !important;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05) !important;
-        transition: all 0.3s ease !important;
-    }
-    .summary-container:hover {
-        border-color: rgba(46, 139, 87, 0.3) !important;
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08) !important;
-    }
-    .summary-title {
-        font-size: 28px !important;
-        font-weight: 600 !important;
-        color: #1D5B79 !important;
-        margin-bottom: 20px !important;
-        padding-bottom: 10px !important;
-        border-bottom: 2px solid rgba(46, 139, 87, 0.2) !important;
-        display: flex !important;
-        align-items: center !important;
-        gap: 10px !important;
-    }
-    .summary-item {
-        font-size: 18px !important;
-        font-weight: 500 !important;
-        color: #2a3f5f !important;
-        margin-bottom: 12px !important;
-        padding: 12px !important;
-        border-radius: 8px !important;
-        background: rgba(46, 139, 87, 0.05) !important;
-        display: flex !important;
-        justify-content: space-between !important;
-        align-items: center !important;
-        transition: all 0.2s ease !important;
-    }
-    .summary-item:hover {
-        background: rgba(46, 139, 87, 0.1) !important;
-        transform: translateX(5px) !important;
-    }
-    .summary-value {
-        font-size: 22px !important;
-        font-weight: 600 !important;
-        color: #2E8B57 !important;
-        padding: 4px 12px !important;
-        border-radius: 4px !important;
-        background: rgba(46, 139, 87, 0.1) !important;
-    }
+                .summary-container {
+                    background: white !important;
+                    padding: 25px !important;
+                    border-radius: 12px !important;
+                    border: 2px solid rgba(46, 139, 87, 0.1) !important;
+                    margin: 25px 0 !important;
+                    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05) !important;
+                    transition: all 0.3s ease !important;
+                }
+                .summary-title {
+                    font-size: 28px !important;
+                    font-weight: 600 !important;
+                    color: #1D5B79 !important;
+                    margin-bottom: 20px !important;
+                    padding-bottom: 10px !important;
+                    border-bottom: 2px solid rgba(46, 139, 87, 0.2) !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    gap: 10px !important;
+                }
+                .summary-item {
+                    font-size: 18px !important;
+                    font-weight: 500 !important;
+                    color: #2a3f5f !important;
+                    margin-bottom: 12px !important;
+                    padding: 12px !important;
+                    border-radius: 8px !important;
+                    background: rgba(46, 139, 87, 0.05) !important;
+                    display: flex !important;
+                    justify-content: space-between !important;
+                    align-items: center !important;
+                    transition: all 0.2s ease !important;
+                }
+                .summary-item:hover {
+                    background: rgba(46, 139, 87, 0.1) !important;
+                    transform: translateX(5px) !important;
+                }
+                .summary-value {
+                    font-size: 22px !important;
+                    font-weight: 600 !important;
+                    color: #2E8B57 !important;
+                    padding: 4px 12px !important;
+                    border-radius: 4px !important;
+                    background: rgba(46, 139, 87, 0.1) !important;
+                }
             </style>
-""", unsafe_allow_html=True)
-
+        """, unsafe_allow_html=True)
         st.markdown(f"""
             <div class="summary-container">
-    <div class="summary-title">📊 Summary of Over-Speeding Letters</div>
-    <div class="summary-item">Violations in Range <span class="summary-value">{total_violations}</span></div>
-    <div class="summary-item">Named Drivers (session) <span class="summary-value">{named_count}</span></div>
-    <div class="summary-item">Unnamed Drivers (session) <span class="summary-value">{unnamed_count}</span></div>
-    <div class="summary-item">Total Warning Letters <span class="summary-value">{total_letters}</span></div>
+                <div class="summary-title">📊 Summary of Over-Speeding Letters</div>
+                <div class="summary-item">Violations in Range <span class="summary-value">{total_violations_filtered}</span></div>
+                <div class="summary-item">Named Drivers (session) <span class="summary-value">{named_count}</span></div>
+                <div class="summary-item">Unnamed Drivers (session) <span class="summary-value">{unnamed_count}</span></div>
+                <div class="summary-item">Total Warning Letters <span class="summary-value">{total_letters}</span></div>
             </div>
-""", unsafe_allow_html=True)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button(get_translation("generate_pdf_named")):
+        """, unsafe_allow_html=True)
+        col_pdf_named, col_pdf_unnamed = st.columns(2)
+        with col_pdf_named:
+            if st.button(get_translation("generate_pdf_named", st.session_state.language)):
                 if not named_drivers.empty:
-                    with st.spinner(get_translation("generating_pdf")):
-                        time.sleep(1)  # Brief pause to show the spinner
-                    doc_merged = mailmerge_multiple_records(named_drivers)
-                    pdf_bytes = convert_mailmerged_doc_to_pdf(doc_merged)
-                    st.success(get_translation("pdf_generation_complete"))
-                    st.download_button(
-                        get_translation("download_pdf_named"),
-                        pdf_bytes,
-                        "warning_letters_named.pdf",
-                        "application/pdf"
-                            )
-                else:
-                    st.warning(get_translation("no_named_drivers"))
-
-        with col2:
-            if st.button(get_translation("generate_pdf_unnamed")):
-                if not unnamed_drivers.empty:
-                    with st.spinner(get_translation("generating_pdf")):
-                        time.sleep(1)  # Brief pause to show the spinner
-                        doc_merged = mailmerge_multiple_records(unnamed_drivers)
+                    progress_bar = st.progress(0)
+                    status_container = st.empty()
+                    total_drivers = len(named_drivers)
+                    start_time_pdf = time.time()
+                    with st.spinner(get_translation("generating_pdf", st.session_state.language)):
+                        doc_merged = mailmerge_multiple_records(named_drivers)
+                        progress_bar.progress(50)
+                        status_container.info(get_translation("Converting to PDF format", st.session_state.language) + " (50%)")
                         pdf_bytes = convert_mailmerged_doc_to_pdf(doc_merged)
-                    st.success(get_translation("pdf_generation_complete"))
-                    st.download_button(
-                        get_translation("download_pdf_unnamed"),
-                        pdf_bytes,
-                        "warning_letters_unnamed.pdf",
-                        "application/pdf"
-                    )
+                        elapsed = time.time() - start_time_pdf
+                        progress_bar.progress(100)
+                        status_container.success(get_translation("PDF Generation Complete!", st.session_state.language) + f" ({elapsed:.1f}s)")
+                    st.download_button(get_translation("download_pdf_named", st.session_state.language),
+                                       pdf_bytes, "warning_letters_named.pdf", "application/pdf")
                 else:
-                    st.warning(get_translation("no_unnamed_drivers")) 
+                    st.warning(get_translation("no_named_drivers", st.session_state.language))
+        with col_pdf_unnamed:
+            if st.button(get_translation("generate_pdf_unnamed", st.session_state.language)):
+                if not unnamed_drivers.empty:
+                    progress_bar = st.progress(0)
+                    status_container = st.empty()
+                    total_drivers = len(unnamed_drivers)
+                    start_time_pdf = time.time()
+                    with st.spinner(get_translation("generating_pdf", st.session_state.language)):
+                        doc_merged = mailmerge_multiple_records(unnamed_drivers)
+                        progress_bar.progress(50)
+                        status_container.info(get_translation("Converting to PDF format", st.session_state.language) + " (50%)")
+                        pdf_bytes = convert_mailmerged_doc_to_pdf(doc_merged)
+                        elapsed = time.time() - start_time_pdf
+                        progress_bar.progress(100)
+                        status_container.success(get_translation("PDF Generation Complete!", st.session_state.language) + f" ({elapsed:.1f}s)")
+                    st.download_button(get_translation("download_pdf_unnamed", st.session_state.language),
+                                       pdf_bytes, "warning_letters_unnamed.pdf", "application/pdf")
+                else:
+                    st.warning(get_translation("no_unnamed_drivers", st.session_state.language))
     render_glow_line()
 
 if "df" in st.session_state and not st.session_state.df.empty:
@@ -1098,45 +807,38 @@ if "df" in st.session_state and not st.session_state.df.empty:
 else:
     st.error("No data available. Please load your dataset.")
 
+# -----------------------------------------------------------------------------
+# DRIVER EVENT ANALYSIS SECTION
+# -----------------------------------------------------------------------------
+heading_bg = "rgba(41, 128, 185, 0.05)" if theme == "light" else "rgba(41, 128, 185, 0.15)"
+heading_border = "#2980B9" if theme == "light" else "#4DA9FF"
+heading_text = "#2980B9" if theme == "light" else "#4DA9FF"
+
 st.markdown(f"""
-<div style="
-    background: linear-gradient(135deg, rgba(41, 128, 185, 0.05), rgba(52, 152, 219, 0.05));
-    padding: 1.5rem;
-    border-radius: 12px;
-    margin: 2rem 0;
-    border-left: 5px solid #2980B9;
-">
-    <h2 style="
-        font-size: 36px;
-        font-weight: 700;
-        color: #2980B9;
-        margin: 0;
-        padding: 0;
-        letter-spacing: 0.5px;
-        font-family: 'Segoe UI', Arial, sans-serif;
-    ">📊 {get_translation("driver_event_analysis", st.session_state.language)}</h2>
+<div style="background: linear-gradient(135deg, {heading_bg}, {heading_bg});
+     padding: 1.5rem; border-radius: 12px; margin: 2rem 0; border-left: 5px solid {heading_border};">
+    <h2 style="font-size: 36px; font-weight: 700; color: {heading_text}; margin: 0; letter-spacing: 0.5px;
+        font-family: 'Segoe UI', Arial, sans-serif;">
+        📊 {get_translation("driver_event_analysis", st.session_state.language)}
+    </h2>
 </div>
 """, unsafe_allow_html=True)
 
-# Ensure driver names are sorted and unique
-driver_list = sorted(filtered_df[filtered_df["Overspeeding Value"] >= 6]["Driver"].astype(str).unique())
-
+driver_list = sorted(filtered_df[filtered_df["Overspeeding Value"] >= overspeed_threshold]["Driver"].unique())
 selected_driver = st.selectbox(get_translation("select_driver", st.session_state.language), driver_list)
-
 if selected_driver:
     driver_data = filtered_df[filtered_df["Driver"] == selected_driver]
     event_counts = driver_data["Event Type"].value_counts().reset_index()
     event_counts.columns = [get_translation("event_type", st.session_state.language), get_translation("count", st.session_state.language)]
-
-    st.markdown(f"""
-<div class="section-header"> {get_translation('event_breakdown_for', st.session_state.language)} {selected_driver}</div>
-""", unsafe_allow_html=True)
+    st.markdown(f"""<div class="section-header"> {get_translation('event_breakdown_for', st.session_state.language)} {selected_driver}</div>""", unsafe_allow_html=True)
     st.dataframe(event_counts, use_container_width=True)
 
-# After the KPI cards section, update the CSS
+# -----------------------------------------------------------------------------
+# ADDITIONAL CSS OVERRIDES (if needed)
+# -----------------------------------------------------------------------------
 st.markdown("""
 <style>
-    /* KPI Cards Styling */
+    /* Enhanced KPI Card Styling */
     .kpi-card {
         position: relative;
         padding: 24px;
@@ -1149,6 +851,7 @@ st.markdown("""
         border: 1px solid rgba(0, 0, 0, 0.05);
         overflow: hidden;
     }
+    
     .kpi-card::before {
         content: '';
         position: absolute;
@@ -1158,14 +861,17 @@ st.markdown("""
         height: 100%;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
+    
     .kpi-card:hover {
         transform: translateY(-5px);
         box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
     }
+    
     .kpi-card:hover::before {
         width: 100%;
         opacity: 0.08;
     }
+    
     .kpi-title {
         font-size: 0.95rem !important;
         font-weight: 500 !important;
@@ -1175,6 +881,7 @@ st.markdown("""
         text-transform: uppercase !important;
         font-family: 'Segoe UI', system-ui, -apple-system, sans-serif !important;
     }
+    
     .kpi-value {
         font-size: 2.4rem !important;
         font-weight: 700 !important;
@@ -1182,30 +889,37 @@ st.markdown("""
         line-height: 1.2 !important;
         font-family: 'Segoe UI', system-ui, -apple-system, sans-serif !important;
     }
+    
     .kpi-card.blue::before {
         background: linear-gradient(180deg, #2575fc, #1a5fc9);
     }
+    
     .kpi-card.red::before {
         background: linear-gradient(180deg, #ff416c, #cc3356);
     }
+    
     .kpi-card.green::before {
         background: linear-gradient(180deg, #00c6ff, #0098cc);
     }
+    
     .kpi-card.blue .kpi-value {
         background: linear-gradient(45deg, #2575fc, #1a5fc9);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
+    
     .kpi-card.red .kpi-value {
         background: linear-gradient(45deg, #ff416c, #cc3356);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
+    
     .kpi-card.green .kpi-value {
         background: linear-gradient(45deg, #00c6ff, #0098cc);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
+    
     .kpi-card .kpi-subtitle {
         font-size: 0.875rem !important;
         color: #94a3b8 !important;
@@ -1213,103 +927,225 @@ st.markdown("""
         font-weight: 400 !important;
         letter-spacing: 0.01em !important;
     }
+</style>
+""", unsafe_allow_html=True)
 
-    /* Section Headers */
-    .section-header {
-        font-size: 28px !important;
-        font-weight: 600 !important;
-        letter-spacing: 0.5px !important;
+# Add this CSS code to enhance the sidebar and buttons with hover effects
+st.markdown("""
+<style>
+    /* Enhanced Sidebar Styling */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+        border-right: 1px solid rgba(0, 0, 0, 0.1);
+        padding: 0.5rem 0;
+        box-shadow: 2px 0 10px rgba(0, 0, 0, 0.05);
     }
-    .section-header::after {
-        content: '';
-        position: absolute;
-        bottom: -3px;
-        left: 0;
-        width: 60px;
-        height: 3px;
-        background: #FF8C42;
+    
+    [data-testid="stSidebar"] > div:first-child {
+        padding: 0.5rem 0.75rem;
     }
-
-    /* Warning Letters Summary */
-    .warning-letters-summary {
-        font-size: 24px;
+    
+    /* Sidebar Section Styling */
+    .sidebar-section {
+        background: linear-gradient(145deg, #ffffff, #f5f7fa);
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        border: 1px solid rgba(29, 91, 121, 0.1);
+        transition: all 0.3s ease;
+    }
+    
+    .sidebar-section:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08);
+        border-color: rgba(29, 91, 121, 0.2);
+    }
+    
+    .sidebar-header {
+        font-size: 1rem;
+        font-weight: 600;
         color: #1D5B79;
-        margin: 25px 0 15px 0;
-        padding: 15px;
-        background: linear-gradient(to right, rgba(46, 139, 87, 0.1), transparent);
-        border-radius: 8px;
+        margin-bottom: 10px;
+        padding-bottom: 5px;
+        border-bottom: 1px solid rgba(29, 91, 121, 0.1);
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
-
-    /* Event Breakdown */
-    .event-breakdown {
-        font-size: 24px;
-        color: #1D5B79;
-        margin: 25px 0 15px 0;
-        padding: 15px;
-        background: linear-gradient(to right, rgba(29, 91, 121, 0.1), transparent);
-        border-radius: 8px;
+    
+    /* Logo Container */
+    .sidebar-logo {
+        padding: 0;
+        text-align: center;
+        background: white;
+        border-radius: 12px;
+        margin-bottom: 12px;
+        margin-top: 0;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        transition: all 0.3s ease;
+        overflow: hidden;
     }
-
-    /* Summary Container */
-    .summary-container {
-        background: white !important;
-        padding: 25px !important;
-        border-radius: 12px !important;
-        border: 2px solid rgba(46, 139, 87, 0.1) !important;
-        margin-bottom: 25px !important;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05) !important;
+    
+    /* Remove all padding in image container */
+    .sidebar-logo img {
+        display: block;
+        width: 100%;
     }
-    .summary-title {
-        font-size: 28px !important;
-        letter-spacing: 0.5px !important;
+    
+    .sidebar-logo > div {
+        padding: 0 !important;
+        margin: 0 !important;
     }
-    .summary-item {
-        font-size: 18px !important;
-        letter-spacing: 0.3px !important;
+    
+    /* Target the specific element that wraps the image */
+    [data-testid="stImage"] {
+        margin: 0 !important;
+        padding: 0 !important;
     }
-    .summary-value {
-        font-size: 22px !important;
-        letter-spacing: 0.3px !important;
+    
+    .sidebar-logo:hover {
+        transform: scale(1.05);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
     }
-
-    /* Dataframe Styling */
-    .dataframe {
-        border: none !important;
-        border-radius: 8px !important;
-        overflow: hidden !important;
+    
+    /* Remove extra spacing in sidebar components */
+    [data-testid="stSidebar"] .stRadio {
+        margin-bottom: 0 !important;
     }
-    .dataframe th {
-        font-size: 16px !important;
-        font-weight: 600 !important;
-        letter-spacing: 0.3px !important;
+    
+    [data-testid="stSidebar"] .stSelectbox {
+        margin-bottom: 0 !important;
     }
-    .dataframe td {
-        font-size: 14px !important;
-        letter-spacing: 0.2px !important;
+    
+    [data-testid="stSidebar"] .stDateInput {
+        margin-bottom: 0 !important;
     }
-    .dataframe tr:hover {
-        background-color: rgba(46, 139, 87, 0.05) !important;
-    }
-
-    /* Button Styling */
+    
+    /* Beautiful Button Styling */
     .stButton > button {
-        background-color: #2E8B57 !important;
+        background: linear-gradient(90deg, #1D5B79, #2E8B57) !important;
         color: white !important;
         border: none !important;
-        padding: 10px 20px !important;
-        border-radius: 6px !important;
-        font-weight: 600 !important;
+        border-radius: 8px !important;
+        padding: 0.5rem 1rem !important;
+        font-weight: 500 !important;
+        letter-spacing: 0.5px !important;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1) !important;
+        transition: all 0.3s ease !important;
+        position: relative !important;
+        overflow: hidden !important;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-3px) !important;
+        box-shadow: 0 6px 15px rgba(0, 0, 0, 0.2) !important;
+        background: linear-gradient(90deg, #194e69, #267b4c) !important;
+    }
+    
+    .stButton > button:active {
+        transform: translateY(0) !important;
+        box-shadow: 0 3px 5px rgba(0, 0, 0, 0.1) !important;
+    }
+    
+    .stButton > button::before {
+        content: '' !important;
+        position: absolute !important;
+        top: 0 !important;
+        left: -100% !important;
+        width: 100% !important;
+        height: 100% !important;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent) !important;
+        transition: all 0.5s ease !important;
+    }
+    
+    .stButton > button:hover::before {
+        left: 100% !important;
+    }
+    
+    /* Download Button Special Styling */
+    .stDownloadButton > button {
+        background: linear-gradient(90deg, #1976D2, #2196F3) !important;
+        border-radius: 8px !important;
+        padding: 0.5rem 1.2rem !important;
+        font-weight: 500 !important;
+        box-shadow: 0 4px 10px rgba(33, 150, 243, 0.2) !important;
         transition: all 0.3s ease !important;
     }
-    .stButton > button:hover {
-        background-color: #1D5B79 !important;
-        transform: translateY(-2px) !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important;
+    
+    .stDownloadButton > button:hover {
+        transform: translateY(-3px) !important;
+        box-shadow: 0 6px 15px rgba(33, 150, 243, 0.3) !important;
+        background: linear-gradient(90deg, #1565C0, #1E88E5) !important;
     }
-
-    /* Progress Bar */
+    
+    /* Radio Button and Checkbox Styling */
+    .stRadio > div {
+        margin-bottom: 8px !important;
+    }
+    
+    .stRadio > div > div > label {
+        background: #f5f7fa !important;
+        border-radius: 8px !important;
+        padding: 8px 12px !important;
+        border: 1px solid rgba(29, 91, 121, 0.1) !important;
+        transition: all 0.2s ease !important;
+    }
+    
+    .stRadio > div > div > label:hover {
+        background: #e9f7fd !important;
+        transform: translateX(3px) !important;
+    }
+    
+    /* Selectbox Styling */
+    div[data-baseweb="select"] > div {
+        border-radius: 8px !important;
+        border: 1px solid rgba(29, 91, 121, 0.3) !important;
+        transition: all 0.3s ease !important;
+        background: white !important;
+    }
+    
+    div[data-baseweb="select"] > div:hover {
+        border-color: #1D5B79 !important;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05) !important;
+    }
+    
+    /* Date Input Styling */
+    .stDateInput > div > div > input {
+        border-radius: 8px !important;
+        padding: 10px 12px !important;
+        border: 1px solid rgba(29, 91, 121, 0.3) !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    .stDateInput > div > div > input:hover {
+        border-color: #1D5B79 !important;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05) !important;
+    }
+    
+    /* Number Input Styling */
+    .stNumberInput > div > div > input {
+        border-radius: 8px !important;
+        padding: 10px 12px !important;
+        border: 1px solid rgba(29, 91, 121, 0.3) !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    .stNumberInput > div > div > input:hover {
+        border-color: #1D5B79 !important;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05) !important;
+    }
+    
+    /* Progress Bar Styling */
     .stProgress > div > div {
-        background-color: #2E8B57 !important;
+        background-color: #1D5B79 !important;
+        height: 8px !important;
+        border-radius: 4px !important;
+    }
+    
+    .stProgress > div {
+        background-color: rgba(29, 91, 121, 0.1) !important;
+        border-radius: 4px !important;
     }
 </style>
 """, unsafe_allow_html=True)

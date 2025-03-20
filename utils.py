@@ -241,13 +241,6 @@ def load_data() -> pd.DataFrame:
             st.error("⚠️ Default data file not found!")
             return pd.DataFrame()
 
-    if "Shift Date" in df.columns:
-        df["Shift Date"] = pd.to_datetime(df["Shift Date"], errors="coerce")
-        df.dropna(subset=["Shift Date"], inplace=True)
-        df["Date"] = df["Shift Date"].dt.date
-        df["Shift"] = df["Shift"].str.capitalize()
-    return df
-
 
 def load_lottie_json(json_path: str) -> Optional[Any]:
     """
@@ -447,32 +440,3 @@ def refresh_data_if_needed() -> None:
     elif time.time() - st.session_state.last_refresh > 3600:  # Refresh every hour
         st.session_state.last_refresh = time.time()
         clear_shared_data()
-
-@st.cache_data(ttl=3600)  # Cache for 1 hour
-def load_data():
-    """Load data from an uploaded file or a default dataset."""
-    DEFAULT_FILE_PATH = r"\\10.211.3.254\04. Mining\WBN - FLEET MANAGEMENT SYSTEM\Haulage DT Safety Event Report\FMS Event Data Query.xlsx"
-    
-    uploaded_file = st.session_state.get("uploaded_file")
-    if uploaded_file is not None:
-        try:
-            df = pd.read_excel(uploaded_file)
-            st.session_state.using_default_data = False
-        except Exception as e:
-            st.error(f"⚠️ Failed to read uploaded file: {e}")
-            return pd.DataFrame()
-    else:
-        if os.path.exists(DEFAULT_FILE_PATH):
-            df = pd.read_excel(DEFAULT_FILE_PATH)
-            st.session_state.using_default_data = True
-        else:
-            st.error("⚠️ Default data file not found!")
-            return pd.DataFrame()
-
-    if "Shift Date" in df.columns:
-        df["Shift Date"] = pd.to_datetime(df["Shift Date"], errors="coerce")
-        df.dropna(subset=["Shift Date"], inplace=True)
-        df["Date"] = df["Shift Date"].dt.date
-        df["Shift"] = df["Shift"].str.capitalize()
-    
-    return df
