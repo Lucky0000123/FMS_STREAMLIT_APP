@@ -593,7 +593,40 @@ def render_file_upload():
     if uploaded_file is not None:
         st.session_state.uploaded_file = uploaded_file
         st.session_state.using_default_data = False
-        st.success("✅ File uploaded successfully! Using your dataset.")
+        
+        # Create a progress indicator
+        progress_container = st.empty()
+        with progress_container:
+            progress_bar = st.progress(0)
+            st.write("Processing uploaded file...")
+            
+        try:
+            # Try to immediately process the file to verify it's valid
+            with st.spinner("Validating Excel file..."):
+                progress_bar.progress(25)
+                # Just read the first few rows to validate format
+                test_df = pd.read_excel(uploaded_file, nrows=5)
+                progress_bar.progress(50)
+                
+                # Reset the file pointer for future reading
+                uploaded_file.seek(0)
+                progress_bar.progress(100)
+                
+                # Clear progress indicators
+                time.sleep(0.5)
+                progress_container.empty()
+                
+                # Show success message
+                st.success("✅ File uploaded successfully! Click 'Refresh Data' to use your dataset.")
+                st.session_state.data_needs_refresh = True
+                
+                # Set data source to indicate we have a pending upload
+                st.session_state.pending_upload = True
+                
+        except Exception as e:
+            progress_container.empty()
+            st.error(f"⚠️ Failed to read uploaded file: {e}")
+            st.session_state.uploaded_file = None
     else:
         st.session_state.using_default_data = True
 
@@ -1490,7 +1523,16 @@ def render_dashboard(filtered_df: pd.DataFrame, analytics_data, map_data):
                 st.warning("⚠️ Using sample dataset - For demonstration purposes only")
         
         with col2:
-            if st.button("Refresh Data"):
+            refresh_clicked = st.button("Refresh Data")
+            if refresh_clicked or st.session_state.get('data_needs_refresh', False):
+                st.session_state.pop('df', None)  # Remove current dataframe to force reload
+                st.session_state.pop('data_needs_refresh', None)  # Clear the flag
+                
+                # If we have a pending upload, prioritize it
+                if st.session_state.get('pending_upload', False):
+                    st.session_state.pop('pending_upload', None)
+                    # The main function will handle loading the uploaded file
+                    
                 st.experimental_rerun()
         
         with col3:
@@ -1548,6 +1590,7 @@ def main():
         # Create containers for loading states
         loading_container = st.empty()
         success_container = st.empty()
+        error_container = st.empty()
         
         # Show loading animation
         with loading_container:
@@ -1634,22 +1677,135 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         
-        # Load data
+        # Try to load data from SQL first
         df = get_shared_data()
         
+        # If SQL data is empty, try to use uploaded file or default data
         if df.empty:
-            loading_container.error("⚠️ No data available. Please check the data source.")
-            st.stop()
+            loading_container.warning("⚠️ SQL Database connection failed. Checking alternative data sources...")
+            
+            # Store the SQL error for later display
+            st.session_state.sql_connection_error = "Failed to connect to SQL database. Please check your connection settings."
+            
+            # Check if user has uploaded a file
+            if "uploaded_file" in st.session_state and st.session_state.uploaded_file is not None:
+                with loading_container:
+                    st.markdown("""
+                    <div style="
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        justify-content: center;
+                        padding: 2rem;
+                        background: linear-gradient(135deg, rgba(29, 91, 121, 0.05), rgba(46, 139, 87, 0.05));
+                        border-radius: 15px;
+                        margin: 1rem 0;
+                        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+                    ">
+                        <div class="loading-pulse"></div>
+                        <h2 style="
+                            color: #1D5B79;
+                            margin-top: 1rem;
+                            font-size: 24px;
+                            font-weight: 600;
+                            text-align: center;
+                        ">Loading Uploaded Excel File...</h2>
+                        <p style="
+                            color: #666;
+                            margin-top: 0.5rem;
+                            font-size: 16px;
+                            text-align: center;
+                        ">Please wait while we process your uploaded data</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                try:
+                    # Try to read the uploaded Excel file
+                    df = pd.read_excel(st.session_state.uploaded_file)
+                    
+                    # Process the dataframe as needed
+                    if "Shift Date" in df.columns:
+                        df["Shift Date"] = pd.to_datetime(df["Shift Date"], errors="coerce")
+                        df.dropna(subset=["Shift Date"], inplace=True)
+                        df["Date"] = df["Shift Date"].dt.date
+                        if "Shift" in df.columns:
+                            df["Shift"] = df["Shift"].str.capitalize()
+                    
+                    st.session_state.data_source = "upload"
+                    loading_container.empty()
+                    with success_container:
+                        st.success("✅ Successfully loaded data from uploaded Excel file!")
+                        time.sleep(2)
+                    success_container.empty()
+                except Exception as e:
+                    loading_container.error(f"⚠️ Failed to read uploaded file: {str(e)}")
+                    st.session_state.data_source = "none"
+                    df = pd.DataFrame()  # Ensure df is defined as empty DataFrame
+            else:
+                # Try to load default data from network path
+                DEFAULT_FILE_PATH = r"\\10.211.3.254\04. Mining\WBN - FLEET MANAGEMENT SYSTEM\Haulage DT Safety Event Report\FMS Event Data Query.xlsx"
+                
+                if os.path.exists(DEFAULT_FILE_PATH):
+                    try:
+                        df = pd.read_excel(DEFAULT_FILE_PATH)
+                        if "Shift Date" in df.columns:
+                            df["Shift Date"] = pd.to_datetime(df["Shift Date"], errors="coerce")
+                            df.dropna(subset=["Shift Date"], inplace=True)
+                            df["Date"] = df["Shift Date"].dt.date
+                            if "Shift" in df.columns:
+                                df["Shift"] = df["Shift"].str.capitalize()
+                        st.session_state.data_source = "network"
+                        loading_container.empty()
+                        with success_container:
+                            st.success("✅ Successfully loaded data from network file!")
+                            time.sleep(2)
+                        success_container.empty()
+                    except Exception as e:
+                        loading_container.error(f"⚠️ Failed to read network file: {str(e)}")
+                        st.session_state.data_source = "none"
+                        df = pd.DataFrame()
+                else:
+                    # Load sample data as last resort
+                    try:
+                        sample_data_path = os.path.join("assets", "sample_data.xlsx")
+                        if os.path.exists(sample_data_path):
+                            df = pd.read_excel(sample_data_path)
+                            if "Shift Date" in df.columns:
+                                df["Shift Date"] = pd.to_datetime(df["Shift Date"], errors="coerce")
+                                df.dropna(subset=["Shift Date"], inplace=True)
+                                df["Date"] = df["Shift Date"].dt.date
+                                if "Shift" in df.columns:
+                                    df["Shift"] = df["Shift"].str.capitalize()
+                            st.session_state.data_source = "sample"
+                            loading_container.empty()
+                            with success_container:
+                                st.warning("⚠️ Using sample dataset - For demonstration purposes only")
+                                time.sleep(2)
+                            success_container.empty()
+                        else:
+                            loading_container.error("⚠️ No data available. Please upload an Excel file.")
+                            st.session_state.data_source = "none"
+                            df = pd.DataFrame()
+                    except Exception as e:
+                        loading_container.error(f"⚠️ Failed to load any data: {str(e)}")
+                        st.session_state.data_source = "none"
+                        df = pd.DataFrame()
         else:
-            # Show success message briefly
+            # SQL data loaded successfully
             loading_container.empty()
             with success_container:
-                st.success("✅ Data loaded successfully!")
-                time.sleep(1)  # Show success message for 1 second
+                st.success("✅ Data loaded successfully from SQL!")
+                time.sleep(1)
             success_container.empty()
-            
-            # Store data in session state
+            st.session_state.data_source = "sql"
+        
+        # If we have data, store it in session state
+        if not df.empty:
             st.session_state.df = df
+        else:
+            loading_container.error("⚠️ No data available. Please upload an Excel file or check database connection.")
+            st.warning("To use your own data, please upload an Excel file above.")
+            st.stop()
     else:
         # Data already loaded, just use it from session state
         df = st.session_state.df
