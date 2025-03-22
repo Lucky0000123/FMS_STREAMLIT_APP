@@ -224,7 +224,23 @@ def load_data():
     if 'data_source' not in st.session_state:
         st.session_state.data_source = None
     
-    # Try SQL connection first
+    # First check for uploaded file - prioritize this source
+    uploaded_file = st.session_state.get("uploaded_file")
+    if uploaded_file is not None:
+        try:
+            logging.info(f"Attempting to load data from uploaded file: {uploaded_file.name}")
+            df = pd.read_excel(uploaded_file)
+            st.session_state.using_default_data = False
+            st.session_state.data_source = "upload"
+            logging.info(f"Successfully loaded {len(df)} rows from uploaded file")
+            st.success("✅ Uploaded dataset is now being used!")
+            return process_dataframe(df)
+        except Exception as e:
+            error_msg = f"Failed to read uploaded file: {e}"
+            logging.error(error_msg)
+            st.error(f"⚠️ {error_msg}")
+    
+    # If no uploaded file, try SQL connection
     sql_error = None
     try:
         logging.info("Attempting to load data from SQL Server...")
@@ -264,22 +280,6 @@ def load_data():
         sql_error = f"SQL connection failed: {str(e)}"
         logging.error(sql_error)
         st.session_state.sql_connection_error = sql_error
-    
-    # If SQL failed, try uploaded file
-    uploaded_file = st.session_state.get("uploaded_file")
-    if uploaded_file is not None:
-        try:
-            logging.info(f"Attempting to load data from uploaded file: {uploaded_file.name}")
-            df = pd.read_excel(uploaded_file)
-            st.session_state.using_default_data = False
-            st.session_state.data_source = "upload"
-            logging.info(f"Successfully loaded {len(df)} rows from uploaded file")
-            st.success("✅ Uploaded dataset is now being used!")
-            return process_dataframe(df)
-        except Exception as e:
-            error_msg = f"Failed to read uploaded file: {e}"
-            logging.error(error_msg)
-            st.error(f"⚠️ {error_msg}")
     
     # Try network file share (for local environment)
     DEFAULT_FILE_PATH = r"\\10.211.3.254\04. Mining\WBN - FLEET MANAGEMENT SYSTEM\Haulage DT Safety Event Report\FMS Event Data Query.xlsx"
@@ -346,6 +346,28 @@ def load_lottie_json(json_path: str) -> Optional[Any]:
         st.error(f"⚠️ Animation file not found: {json_path}")
     except json.JSONDecodeError as e:
         st.error(f"⚠️ Invalid JSON format in {json_path}: {e}")
+    return None
+
+
+def load_lottieurl(url: str) -> Optional[Any]:
+    """
+    Load a Lottie animation from a URL.
+
+    Parameters:
+        url (str): The URL to the Lottie animation JSON.
+    
+    Returns:
+        dict or None: Parsed JSON content if successful; otherwise, None.
+    """
+    import requests
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"⚠️ Failed to load animation from URL: {url}, status code: {response.status_code}")
+    except Exception as e:
+        st.error(f"⚠️ Error loading animation from URL: {e}")
     return None
 
 
@@ -425,29 +447,28 @@ def render_file_upload() -> None:
         st.info("ℹ️ Using default dataset.")
 
 
-def switch_theme() -> None:
-    """
-    Switch the dashboard theme by applying the appropriate CSS variables based on the current theme.
-
-    The function reads the selected theme from the session state (defaulting to 'light' if not set)
-    and forces an app rerun to apply the changes.
-    """
-    theme = st.session_state.get("theme", "light")
-    theme_config = THEME_CONFIG.get(theme, THEME_CONFIG["light"])
-
-    st.markdown(f"""
-        <style>
-        :root {{
-            --primary-color: {theme_config['primary']};
-            --secondary-color: {theme_config['secondary']};
-            --accent-color: {theme_config['accent']};
-            --background-color: {theme_config['background']};
-            --text-color: {theme_config['text']};
-            --border-color: {theme_config['border']};
-        }}
-        </style>
-    """, unsafe_allow_html=True)
-
+def switch_theme():
+    """Toggle between light and dark theme in the app."""
+    # Check current theme setting
+    current_theme = st.session_state.get("theme", "light")
+    
+    # Toggle theme
+    new_theme = "dark" if current_theme == "light" else "light"
+    st.session_state.theme = new_theme
+    
+    # Apply theme configuration
+    if new_theme == "dark":
+        # Dark theme colors
+        st.session_state.text_color = "#FFFFFF"
+        st.session_state.background_color = "#121212"
+        st.session_state.accent_color = "#1D5B79"
+    else:
+        # Light theme colors
+        st.session_state.text_color = "#333333"
+        st.session_state.background_color = "#FFFFFF"
+        st.session_state.accent_color = "#1D5B79"
+        
+    # Force page reload to apply changes
     st.rerun()
 
 
@@ -527,3 +548,38 @@ def refresh_data_if_needed() -> None:
     elif time.time() - st.session_state.last_refresh > 3600:  # Refresh every hour
         st.session_state.last_refresh = time.time()
         clear_shared_data()
+
+def ensure_column_types(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure that certain columns are in the correct data type, especially after SQL queries."""
+    if df.empty:
+        return df
+    
+    # Convert date columns to datetime
+    date_columns = [col for col in df.columns if 'date' in col.lower() or 'time' in col.lower()]
+    for col in date_columns:
+        if col in df.columns:
+            try:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+            except:
+                pass  # Skip if conversion fails
+    
+    # Ensure numeric columns are numeric
+    numeric_columns = ['Overspeeding Value', 'Speed', 'Top Speed', 'Speed Limit']
+    for col in numeric_columns:
+        if col in df.columns:
+            try:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            except:
+                pass  # Skip if conversion fails
+    
+    # Ensure string columns are strings
+    string_columns = ['Driver', 'Group', 'Shift', 'License Plate', 'Risk Level']
+    for col in string_columns:
+        if col in df.columns:
+            df[col] = df[col].astype(str).replace('nan', '')
+    
+    # Add derived columns if they don't exist
+    if 'Shift Date' in df.columns and 'Shift_Date_only' not in df.columns:
+        df['Shift_Date_only'] = df['Shift Date'].dt.date
+    
+    return df

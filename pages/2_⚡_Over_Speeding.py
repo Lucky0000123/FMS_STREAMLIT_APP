@@ -2,8 +2,9 @@
 import streamlit as st
 import time
 import json
-import pdfkit
 import platform
+import pyodbc
+import traceback
 
 from sidebar import render_sidebar
 
@@ -34,19 +35,70 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
+# Add SQL connection functionality
+@st.cache_resource
+def get_sql_connection():
+    """Establish a connection to the SQL Server database."""
+    try:
+        # Connection parameters
+        server = '10.211.10.2'
+        database = 'FMS_DB'
+        username = 'headofnickel'
+        password = 'Dataisbeautifulrev001!'
+        driver = '{ODBC Driver 17 for SQL Server}'
+        
+        # Create connection string
+        conn_str = f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password}'
+        
+        # Establish connection
+        conn = pyodbc.connect(conn_str)
+        
+        # Reset any previous error messages
+        if "db_error" in st.session_state:
+            del st.session_state.db_error
+            
+        return conn
+    except Exception as e:
+        # Store error message in session state
+        st.session_state.db_error = str(e)
+        st.error(f"Could not connect to database: {e}")
+        return None
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def run_sql_query(query, params=None):
+    """Execute a SQL query and return results as a pandas DataFrame."""
+    conn = get_sql_connection()
+    if conn is None:
+        st.warning("Using local data instead of SQL database.")
+        return pd.DataFrame()  # Return empty DataFrame
+    
+    try:
+        if params:
+            df = pd.read_sql(query, conn, params=params)
+        else:
+            df = pd.read_sql(query, conn)
+        return df
+    except Exception as e:
+        st.error(f"Error executing SQL query: {e}")
+        return pd.DataFrame()  # Return empty DataFrame
+
 # Local imports
 from utils import (
+    get_sql_connection,
+    load_data,
+    refresh_data_if_needed,
+    load_lottieurl,
+    get_translation,
     process_dataframe,
     assign_risk_level,
-    load_lottie_json,
     render_chart_title,
     render_header,
     filter_data,
     get_shared_data,
-    refresh_data_if_needed,
-    render_glow_line
+    render_glow_line,
+    ensure_column_types
 )
-from translations import get_translation, get_event_translation
+from translations import get_event_translation
 from config import (
     THEME_CONFIG,
     RISK_THRESHOLDS,
@@ -365,123 +417,120 @@ with col3:
         value=7,
         key="trend_days"
     )
-    st.markdown(f"<div style='text-align: center; color: #666;'>{trend_days} {get_translation('days', lang)}</div>", unsafe_allow_html=True)
-    if "trend_days" not in st.session_state:
-        st.session_state.trend_days = 7
-        trend_days = st.slider("", 7, 30, st.session_state.trend_days, key="trend_days_top")
-        st.session_state.trend_days = trend_days
+    
+    # Calculate and display the actual date range
+    if 'df' in st.session_state and not st.session_state.df.empty and 'Shift Date' in st.session_state.df.columns:
+        try:
+            df = st.session_state.df  # Get df from session state
+            latest_date = df['Shift Date'].max()
+            if pd.notna(latest_date):
+                trend_end = latest_date
+                trend_start = trend_end - pd.DateOffset(days=trend_days)
+                
+                # Format dates for display
+                start_date_str = trend_start.strftime('%Y-%m-%d')
+                end_date_str = trend_end.strftime('%Y-%m-%d')
+                
+                # Display days and date range with improved styling
+                st.markdown(f"""
+                <div style='text-align: center; margin-top: 5px;'>
+                    <div style='font-size: 18px; font-weight: 600; color: #1D5B79;'>{trend_days} {get_translation('days', lang)}</div>
+                    <div style='font-size: 14px; color: #333; margin-top: 5px; background-color: rgba(29, 91, 121, 0.1); 
+                         padding: 5px 10px; border-radius: 5px; display: inline-block;'>
+                        {start_date_str} → {end_date_str}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div style='text-align: center; color: #333; font-weight: 500;'>{trend_days} {get_translation('days', lang)}</div>", unsafe_allow_html=True)
+        except Exception as e:
+            st.markdown(f"<div style='text-align: center; color: #333; font-weight: 500;'>{trend_days} {get_translation('days', lang)}</div>", unsafe_allow_html=True)
+    else:
+        st.markdown(f"<div style='text-align: center; color: #333; font-weight: 500;'>{trend_days} {get_translation('days', lang)}</div>", unsafe_allow_html=True)
 
 # Create containers for loading states
 loading_container = st.empty()
 success_container = st.empty()
 
 # -------------------- DATA LOADING --------------------
+# Check if we can connect to SQL first
+if "data_source" not in st.session_state:
+    st.session_state.data_source = None  # Initialize
+
+# Try to establish SQL connection if not already set
+if st.session_state.data_source is None:
+    # Show loading indicator
+    sql_loading = st.empty()
+    sql_loading.info("Checking data sources...")
+    
+    # Try to connect to SQL database
+    conn = get_sql_connection()
+    if conn is not None:
+        # SQL connection successful
+        st.session_state.data_source = "sql"
+        sql_loading.success("Connected to SQL database!")
+        time.sleep(1)
+        sql_loading.empty()
+    else:
+        # SQL connection failed
+        st.session_state.data_source = "local"
+        sql_loading.warning("Could not connect to SQL database. Using local data.")
+        time.sleep(1)
+        sql_loading.empty()
+
 # Check if we need to refresh data
 refresh_data_if_needed()
 
-# Load data using the optimized get_shared_data function
+# Load data based on the data source
 if "df" not in st.session_state:
-    # Only show loading animation when actually loading data
+    # Create a loading message
+    loading_container = st.empty()
     with loading_container:
-        st.markdown("""
-        <style>
-        .loading-pulse {
-            width: 64px;
-            height: 64px;
-            border: 5px solid #1D5B79;
-            border-radius: 50%;
-            position: relative;
-            animation: pulse 1.5s cubic-bezier(0.24, 0, 0.38, 1) infinite;
-        }
-        
-        .loading-pulse:before {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background: #2E8B57;
-            opacity: 0.6;
-            animation: pulse-inner 1.5s cubic-bezier(0.24, 0, 0.38, 1) infinite;
-        }
-        
-        @keyframes pulse {
-            0% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(29, 91, 121, 0.7);
-            }
-            70% {
-                transform: scale(1);
-                box-shadow: 0 0 0 15px rgba(29, 91, 121, 0);
-            }
-            100% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(29, 91, 121, 0);
-            }
-        }
-        
-        @keyframes pulse-inner {
-            0% {
-                transform: translate(-50%, -50%) scale(1);
-                opacity: 0.6;
-            }
-            70% {
-                transform: translate(-50%, -50%) scale(1.2);
-                opacity: 0.2;
-            }
-            100% {
-                transform: translate(-50%, -50%) scale(1);
-                opacity: 0.6;
-            }
-        }
-        </style>
-        <div style="
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 2rem;
-            background: linear-gradient(135deg, rgba(29, 91, 121, 0.05), rgba(46, 139, 87, 0.05));
-            border-radius: 15px;
-            margin: 1rem 0;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-        ">
-            <div class="loading-pulse"></div>
-            <h2 style="
-                color: #1D5B79;
-                margin-top: 1rem;
-                font-size: 24px;
-                font-weight: 600;
-                text-align: center;
-            ">Loading Data from SQL Database...</h2>
-            <p style="
-                color: #666;
-                margin-top: 0.5rem;
-                font-size: 16px;
-                text-align: center;
-            ">Please wait while we fetch the latest safety records</p>
-        </div>
-        """, unsafe_allow_html=True)
+        with st.spinner("Loading Data..."):
+            # Create loading animation
+            try:
+                lottie_loading = load_lottieurl('https://assets2.lottiefiles.com/packages/lf20_poqmycwy.json')
+                if lottie_loading is not None:
+                    st_lottie(lottie_loading, height=200, key="loading_animation")
+                else:
+                    st.info("Please wait while we load the data...")
+            except Exception as e:
+                st.info("Please wait while we load the data...")
+            st.info("Please wait while we load the data...")
+
+    # First check if we have an uploaded file in session state
+    if "uploaded_file" in st.session_state and st.session_state.uploaded_file is not None:
+        try:
+            df = pd.read_excel(st.session_state.uploaded_file)
+            st.session_state.df = df
+            st.session_state.data_source = "upload"
+            loading_container.empty()
+            success_container = st.empty()
+            success_container.success("✅ Using uploaded dataset!")
+            time.sleep(2)
+            success_container.empty()
+        except Exception as e:
+            loading_container.warning(f"Could not use uploaded file: {str(e)}. Falling back to SQL database.")
+            time.sleep(2)
+            # Continue with SQL loading if uploaded file failed
     
-    # Load the data
-    df = get_shared_data()
-    
-    if df.empty:
-        loading_container.error("⚠️ No data available. Please check the data source.")
-        st.stop()
-    else:
-        # Show success message briefly
-        loading_container.empty()
-        with success_container:
-            st.success("✅ Data loaded successfully!")
-            time.sleep(1)  # Show success message for 1 second
-        success_container.empty()
-else:
-    # If data is already in session state, just use it
+    # If no uploaded file or it failed to load, try SQL or default data
+    if "df" not in st.session_state:
+        try:
+            # Try to load using utils
+            df = load_data()
+            if not df.empty:
+                st.session_state.df = df
+                loading_container.empty()
+        except Exception as e:
+            st.error(f"Error loading data: {e}")
+            st.session_state.df = pd.DataFrame()
+
+# Ensure df is properly defined by getting it from session state
+if "df" in st.session_state:
     df = st.session_state.df
+else:
+    df = pd.DataFrame()  # Create an empty DataFrame as fallback
 
 # Set default selections since we removed the sidebar filters
 selections = {
@@ -624,10 +673,10 @@ if 'Shift Date' in df.columns:
                 st.plotly_chart(fig1, use_container_width=True, key="main_speeding_trend")
             else:
                 st.warning(get_translation("no_data_warning", lang))
-        else:
-            st.error(get_translation("column_not_found_error", lang).format(column="Event Type"))
     except Exception as e:
-        st.error(get_translation("data_processing_error", lang).format(error=str(e)))
+            st.error(get_translation("data_processing_error", lang).format(error=str(e)))
+    except Exception as e:
+        st.error(f"Error processing data: {e}")
 else:
     st.error(get_translation("column_not_found_error", lang).format(column="Shift Date"))
 
@@ -661,8 +710,9 @@ if not trend_df.empty and 'Group' in trend_df.columns:
             # Create visualization
             fig = go.Figure()
             
-            # Add line traces with area fill instead of bar charts
-            for risk_level in bar_colors.keys():
+            # First add all area traces in specific order: Medium, High, Extreme
+            risk_order = ["Medium", "High", "Extreme"]  # Add lowest to highest for proper stacking
+            for risk_level in risk_order:
                 fig.add_trace(
                     go.Scatter(
                         x=processed_df["Shift Date"],
@@ -677,8 +727,9 @@ if not trend_df.empty and 'Group' in trend_df.columns:
                                       get_translation("events", lang) + ": %{y}"
                     )
                 )
-                
-                # Keep the trend lines
+            
+            # Now add all line traces so they appear on top
+            for risk_level in risk_order:  # Use same order for consistency
                 fig.add_trace(
                     go.Scatter(
                         x=processed_df["Shift Date"],
@@ -692,7 +743,7 @@ if not trend_df.empty and 'Group' in trend_df.columns:
                     )
                 )
 
-            # Add total events trend line
+            # Add total events trend line last so it's on top of everything
             fig.add_trace(
                 go.Scatter(
                     x=processed_df["Shift Date"],
@@ -713,11 +764,11 @@ if not trend_df.empty and 'Group' in trend_df.columns:
                 margin=dict(l=20, r=20, t=80, b=50),
                 legend=dict(
                     title=get_translation("risk_level", lang),
-                    orientation="v",
-                    yanchor="top",
-                    y=1,
-                    xanchor="left",
-                    x=1.05,
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="center",
+                    x=0.5,
                     font=dict(size=14, color="black")
                 ),
                 plot_bgcolor='rgba(0,0,0,0)',
@@ -772,157 +823,159 @@ if not trend_df.empty and 'Group' in trend_df.columns:
 else:
     st.warning(get_translation("no_overspeeding_data", lang))
 
-
-
-# -------------------- DOWNLOAD PDF BUTTON --------------------
-render_chart_title("download_report")
-
-# Add a new function for direct PDF generation using ReportLab
-def generate_direct_pdf():
-    """Generate PDF report directly using ReportLab - much faster than HTML conversion."""
-    import io
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import letter, A4
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import inch
+@st.cache_data(ttl=300)
+def get_speeding_metrics_sql(selections):
+    """Get all speeding metrics in a single optimized query."""
+    where_conditions = []
     
-    # Create a BytesIO buffer to receive the PDF data
-    buffer = io.BytesIO()
+    if selections.get("dates"):
+        if isinstance(selections["dates"], tuple):
+            start_date, end_date = selections["dates"]
+            where_conditions.append(f"[Shift Date] >= '{start_date}' AND [Shift Date] <= '{end_date}'")
+        else:
+            date_val = selections["dates"]
+            where_conditions.append(f"CAST([Shift Date] AS DATE) = '{date_val}'")
     
-    # Create the PDF document
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=72,
-        leftMargin=72,
-        topMargin=72,
-        bottomMargin=72
-    )
+    if selections.get("group", "All") != "All":
+        where_conditions.append(f"[Group] = '{selections['group']}'")
     
-    # Styles
-    styles = getSampleStyleSheet()
-    title_style = styles['Heading1']
-    title_style.alignment = 1  # Center alignment
-    title_style.textColor = colors.HexColor('#1D5B79')
+    where_clause = " AND ".join(where_conditions)
+    if where_clause:
+        where_clause = f"WHERE {where_clause}"
     
-    subtitle_style = styles['Heading2']
-    subtitle_style.textColor = colors.HexColor('#2E8B57')
-    
-    normal_style = styles['Normal']
-    
-    # Initialize story elements
-    elements = []
-    
-    # Add the title
-    elements.append(Paragraph(get_translation("report_title", lang), title_style))
-    elements.append(Spacer(1, 0.3 * inch))
-    
-    # Add timestamp
-    timestamp_style = ParagraphStyle(
-        'timestamp',
-        parent=normal_style,
-        alignment=2,  # Right alignment
-        textColor=colors.gray
-    )
-    elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", timestamp_style))
-    elements.append(Spacer(1, 0.5 * inch))
-    
-    # Add status message
-    elements.append(Paragraph("Generating charts...", normal_style))
-    
-    # Helper function to convert Plotly figures to images for the PDF
-    def add_plotly_figure(fig, caption, width=7*inch):
-        try:
-            # Convert Plotly figure to PNG image bytes
-            img_bytes = fig.to_image(format="png", width=1000, height=600, scale=1.5)
-            
-            # Create an in-memory image
-            img_stream = io.BytesIO(img_bytes)
-            img = Image(img_stream, width=width)
-            
-            # Add caption and image
-            elements.append(Spacer(1, 0.3 * inch))
-            elements.append(Paragraph(caption, subtitle_style))
-            elements.append(Spacer(1, 0.1 * inch))
-            elements.append(img)
-            return True
-        except Exception as e:
-            elements.append(Paragraph(f"Error generating chart: {str(e)}", normal_style))
-            return False
-    
-    # Add charts - main trend chart first
-    charts_added = False
-    if "main_trend_fig" in st.session_state:
-        if add_plotly_figure(st.session_state["main_trend_fig"], "Overall Speeding Trend"):
-            charts_added = True
-    
-    # Add group charts if available
-    if 'group_fig_list' in st.session_state and st.session_state['group_fig_list']:
-        elements.append(Spacer(1, 0.3 * inch))
-        elements.append(Paragraph("Overspeeding by Fleet Group", subtitle_style))
-        
-        for i, fig in enumerate(st.session_state['group_fig_list'][:3]):
-            if add_plotly_figure(fig, f"Fleet Group {i+1}", width=6.5*inch):
-                charts_added = True
-    
-    # If no charts were added, show a message
-    if not charts_added:
-        elements.append(Spacer(1, inch))
-        no_data_style = ParagraphStyle(
-            'nodata',
-            parent=normal_style,
-            alignment=1,  # Center
-            textColor=colors.HexColor('#1D5B79'),
-            fontSize=14
+    try:
+        metrics_query = f"""
+        WITH BaseStats AS (
+            SELECT 
+                COUNT(*) as total_events,
+                COUNT(DISTINCT [Driver]) as unique_drivers,
+                AVG([Overspeeding Value]) as avg_overspeed,
+                MAX([Overspeeding Value]) as max_overspeed,
+                COUNT(CASE WHEN [Overspeeding Value] >= 20 THEN 1 END) as extreme_events,
+                COUNT(CASE WHEN [Overspeeding Value] >= 10 AND [Overspeeding Value] < 20 THEN 1 END) as high_events,
+                COUNT(CASE WHEN [Overspeeding Value] < 10 THEN 1 END) as medium_events
+            FROM dbo.FMS_SPEED
+            {where_clause}
+        ),
+        GroupStats AS (
+            SELECT 
+                [Group],
+                COUNT(*) as group_events,
+                AVG([Overspeeding Value]) as group_avg_speed
+            FROM dbo.FMS_SPEED
+            {where_clause}
+            GROUP BY [Group]
+        ),
+        TopGroups AS (
+            SELECT TOP 5
+                [Group],
+                group_events,
+                group_avg_speed
+            FROM GroupStats
+            ORDER BY group_events DESC
         )
-        elements.append(Paragraph("No data available for the current selection", no_data_style))
-        elements.append(Spacer(1, 0.2 * inch))
-        elements.append(Paragraph("Please adjust your filters or upload data to generate charts.", normal_style))
-    
-    # Add footer
-    elements.append(Spacer(1, 0.5 * inch))
-    footer_style = ParagraphStyle(
-        'footer',
-        parent=normal_style,
-        alignment=1,  # Center
-        textColor=colors.gray,
-        fontSize=8
-    )
-    elements.append(Paragraph("Generated by FMS Safety Dashboard", footer_style))
-    
-    # Build the PDF document
-    doc.build(elements)
-    
-    # Get the PDF value from the buffer
-    pdf_data = buffer.getvalue()
-    buffer.close()
-    
-    return pdf_data
+        SELECT 
+            b.*,
+            STRING_AGG(CONCAT(g.[Group], ' (', g.group_events, ')'), CHAR(13)) as top_groups
+        FROM BaseStats b
+        CROSS JOIN TopGroups g
+        GROUP BY 
+            b.total_events, b.unique_drivers, b.avg_overspeed,
+            b.max_overspeed, b.extreme_events, b.high_events,
+            b.medium_events
+        """
+        
+        metrics_df = run_sql_query(metrics_query)
+        if not metrics_df.empty:
+            return {
+                'total_events': metrics_df.iloc[0]['total_events'],
+                'unique_drivers': metrics_df.iloc[0]['unique_drivers'],
+                'avg_overspeed': round(metrics_df.iloc[0]['avg_overspeed'], 1),
+                'max_overspeed': metrics_df.iloc[0]['max_overspeed'],
+                'extreme_events': metrics_df.iloc[0]['extreme_events'],
+                'high_events': metrics_df.iloc[0]['high_events'],
+                'medium_events': metrics_df.iloc[0]['medium_events'],
+                'top_groups': metrics_df.iloc[0]['top_groups'].split('\r') if metrics_df.iloc[0]['top_groups'] else []
+            }
+    except Exception as e:
+        st.error(f"Error calculating speeding metrics: {e}")
+        return None
 
-# Replace the download button section
-if st.button(get_translation("generate_pdf", lang), key="generate_pdf"):
-    with st.spinner(get_translation("generating_pdf", lang)):
-        try:
-            start_time = time.time()
-            
-            # Generate PDF directly without HTML conversion
-            pdf_data = generate_direct_pdf()
-            
-            generation_time = time.time() - start_time
-            st.success(f"PDF generated in {generation_time:.1f} seconds!")
-            
-            # Create download button
-            st.download_button(
-                label=get_translation("download_pdf", lang),
-                data=pdf_data,
-                file_name=f"safety_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                mime="application/pdf",
-                key="download_pdf"
-            )
-            
-        except Exception as e:
-            st.error(f"{get_translation('pdf_error', lang)} {e}")
-            st.error("Error details:", e)
-            import traceback
-            st.code(traceback.format_exc())
+@st.cache_data(ttl=300)
+def get_speeding_trend_data_sql(selections):
+    """Get speeding trend data with optimized SQL query."""
+    where_conditions = []
+    
+    if selections.get("dates"):
+        if isinstance(selections["dates"], tuple):
+            start_date, end_date = selections["dates"]
+            where_conditions.append(f"[Shift Date] >= '{start_date}' AND [Shift Date] <= '{end_date}'")
+        else:
+            date_val = selections["dates"]
+            where_conditions.append(f"CAST([Shift Date] AS DATE) = '{date_val}'")
+    
+    if selections.get("group", "All") != "All":
+        where_conditions.append(f"[Group] = '{selections['group']}'")
+    
+    where_clause = " AND ".join(where_conditions)
+    if where_clause:
+        where_clause = f"WHERE {where_clause}"
+    
+    try:
+        trend_query = f"""
+        WITH DateRange AS (
+            SELECT TOP {trend_days}
+                CAST([Shift Date] AS DATE) as event_date,
+                COUNT(*) as total_events,
+                AVG([Overspeeding Value]) as avg_overspeed,
+                COUNT(CASE WHEN [Overspeeding Value] >= 20 THEN 1 END) as extreme_events
+            FROM dbo.FMS_SPEED
+            {where_clause}
+            GROUP BY CAST([Shift Date] AS DATE)
+            ORDER BY event_date DESC
+        )
+        SELECT *
+        FROM DateRange
+        ORDER BY event_date ASC
+        """
+        
+        return run_sql_query(trend_query)
+    except Exception as e:
+        st.error(f"Error getting trend data: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def get_group_stats_sql(selections):
+    """Get group statistics using SQL."""
+    where_conditions = []
+    
+    if selections.get("dates"):
+        if isinstance(selections["dates"], tuple):
+            start_date, end_date = selections["dates"]
+            where_conditions.append(f"[Shift Date] >= '{start_date}' AND [Shift Date] <= '{end_date}'")
+        else:
+            date_val = selections["dates"]
+            where_conditions.append(f"CAST([Shift Date] AS DATE) = '{date_val}'")
+    
+    where_clause = " AND ".join(where_conditions)
+    if where_clause:
+        where_clause = f"WHERE {where_clause}"
+    
+    try:
+        group_query = f"""
+        SELECT 
+            [Group],
+            COUNT(*) as total_events,
+            AVG([Overspeeding Value]) as avg_overspeed,
+            COUNT(CASE WHEN [Overspeeding Value] >= 20 THEN 1 END) as extreme_events,
+            COUNT(DISTINCT [Driver]) as unique_drivers
+        FROM dbo.FMS_SPEED
+        {where_clause}
+        GROUP BY [Group]
+        ORDER BY total_events DESC
+        """
+        
+        return run_sql_query(group_query)
+    except Exception as e:
+        st.error(f"Error getting group stats: {e}")
+        return pd.DataFrame()

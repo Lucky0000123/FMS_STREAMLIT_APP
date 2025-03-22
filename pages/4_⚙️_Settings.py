@@ -89,7 +89,7 @@ with tab_db:
             del st.session_state.df
         st.success("✅ Cache cleared! Data will be reloaded from source.")
         time.sleep(1)
-        st.experimental_rerun()
+        st.rerun()
     
     # Create form for database settings
     with st.form("db_settings"):
@@ -235,7 +235,7 @@ with tab_logs:
     
     # Create a button to refresh logs
     if st.button("Refresh Logs"):
-        st.experimental_rerun()
+        st.rerun()
     
     # Check if there are logs
     log_file = "app.log"
