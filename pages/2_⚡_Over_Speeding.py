@@ -45,42 +45,89 @@ def get_sql_connection():
         database = 'FMS_DB'
         username = 'headofnickel'
         password = 'Dataisbeautifulrev001!'
-        driver = '{ODBC Driver 17 for SQL Server}'
         
-        # Create connection string
-        conn_str = f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password}'
+        # Try different drivers in order of preference
+        drivers = [
+            '{ODBC Driver 18 for SQL Server}',
+            '{ODBC Driver 17 for SQL Server}',
+            '{SQL Server}'
+        ]
         
-        # Establish connection
-        conn = pyodbc.connect(conn_str)
-        
-        # Reset any previous error messages
-        if "db_error" in st.session_state:
-            del st.session_state.db_error
-            
-        return conn
+        # Try each driver until one works
+        for driver in drivers:
+            try:
+                # Create connection string
+                conn_str = f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password}'
+                
+                # Establish connection
+                conn = pyodbc.connect(conn_str)
+                
+                # Reset any previous error messages
+                if "db_error" in st.session_state:
+                    del st.session_state.db_error
+                    
+                return conn
+            except pyodbc.Error:
+                if driver == drivers[-1]:
+                    # Don't raise if this is the last driver, just continue to exception handling
+                    pass
+                continue
+                
     except Exception as e:
-        # Store error message in session state
+        # Store error message in session state but don't display it
         st.session_state.db_error = str(e)
-        st.error(f"Could not connect to database: {e}")
         return None
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def run_sql_query(query, params=None):
     """Execute a SQL query and return results as a pandas DataFrame."""
-    conn = get_sql_connection()
-    if conn is None:
-        st.warning("Using local data instead of SQL database.")
-        return pd.DataFrame()  # Return empty DataFrame
-    
+    conn = None
     try:
+        conn = get_sql_connection()
+        if conn is None:
+            # Don't show warnings to users, silently use local data
+            return pd.DataFrame()
+        
+        # Execute query
         if params:
             df = pd.read_sql(query, conn, params=params)
         else:
             df = pd.read_sql(query, conn)
+            
+        # Close connection as soon as data is retrieved
+        conn.close()
+        conn = None
+        
         return df
-    except Exception as e:
-        st.error(f"Error executing SQL query: {e}")
-        return pd.DataFrame()  # Return empty DataFrame
+    
+    except pyodbc.ProgrammingError as e:
+        # Silently handle "Attempt to use a closed connection" errors
+        if "Attempt to use a closed connection" in str(e):
+            try:
+                # Try establishing a fresh connection
+                conn = get_sql_connection()
+                if conn:
+                    if params:
+                        df = pd.read_sql(query, conn, params=params)
+                    else:
+                        df = pd.read_sql(query, conn)
+                    return df
+            except Exception:
+                # If still failing, return empty DataFrame without showing errors
+                pass
+        # Return empty DataFrame without showing error to user
+        return pd.DataFrame()
+    
+    except Exception:
+        # Silently handle all other errors - don't show errors to users
+        return pd.DataFrame()
+    
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except:
+                pass
 
 # Local imports
 from utils import (
@@ -150,16 +197,16 @@ col_trans, col_json = st.columns([1, 1])
 with col_trans:
     st.markdown("""
     <div style="
-        padding: 20px;
+        padding: 10px;
         border-radius: 12px;
-        margin-top: 20px;
+        margin-top: 10px;
         text-align: center;
         background: linear-gradient(to right, rgba(29, 91, 121, 0.05), transparent);
     ">
         <h3 style="
             color: #1D5B79;
-            margin-bottom: 15px;
-            font-size: 32px;
+            margin-bottom: 10px;
+            font-size: 22px;
             font-weight: 600;
             letter-spacing: 0.5px;
         ">{}</h3>
@@ -190,13 +237,15 @@ with col_json:
             reverse=False,
             loop=True,
             quality="high",
-            height=300
+            height=200
         )
     except Exception as e:
         st.warning(f"Animation could not be loaded. Error: {str(e)}")
 
 # Add space after the row
 st.markdown("<br>", unsafe_allow_html=True)
+render_glow_line()
+render_glow_line()
 
 # Style and add the translation button
 st.markdown("""
@@ -234,7 +283,7 @@ st.markdown("""
     
     /* Style slider thumb and track */
     .stSlider > div > div > div {
-        background-color: #1D5B79 !important;
+        background-color: #5F99AE !important;
     }
     
     /* Style the slider numbers */
@@ -269,90 +318,257 @@ render_header(get_translation("speeding_title", lang), "")
 # After the header section, add the following CSS and content
 st.markdown("""
 <style>
-    /* Professional Container Styling */
+    /* Global Font Settings for Better Multilingual Support */
+    body, .stApp, .element-container, .stMarkdown, .stText, button, input, select, textarea {
+        font-family: "Segoe UI", "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", sans-serif !important;
+    }
+    
+    /* Ensure proper spacing and sizing for CJK characters */
+    .chart-title, h1, h2, h3, h4, h5, h6, p, span, div, button {
+        letter-spacing: normal !important;
+        line-height: 1.6 !important;
+    }
+    
+    /* Fix for Chinese text wrapping */
+    .stMarkdown p, .stText p, button, .section-header, .rating-item span {
+        word-break: normal !important;
+        overflow-wrap: break-word !important;
+    }
+    
+    /* Improve overall styling consistency */
     .pro-container {
-        background: white;
+        background: linear-gradient(135deg, #1D5B79, #2E8B57);  /* Updated gradient background */
         border-radius: 15px;
         padding: 25px;
         margin: 20px 0;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-        border: 1px solid rgba(29, 91, 121, 0.1);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+        transition: all 0.3s ease;
     }
-
-    /* Section Headers */
+    
+    .pro-container:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 6px 25px rgba(0, 0, 0, 0.3);
+        background: linear-gradient(135deg, #1D5B79, #2E8B57);  /* Maintain gradient on hover */
+    }
+    
+    /* Enhanced section headers for better visibility */
     .section-header {
-        color: #1D5B79;
+        color: #FFFFFF;  /* White text for better contrast */
         font-size: 24px;
         font-weight: 600;
         margin-bottom: 20px;
         padding-bottom: 10px;
-        border-bottom: 2px solid rgba(29, 91, 121, 0.1);
+        border-bottom: 2px solid rgba(255, 255, 255, 0.2);
         display: flex;
         align-items: center;
         gap: 10px;
+        position: relative;
+        overflow: hidden;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);  /* Text shadow for better readability */
     }
-
-    /* Rating Items */
+    
+    .section-header:after {
+        content: "";
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        height: 2px;
+        width: 60px;
+        background: linear-gradient(to right, #FFFFFF, rgba(255, 255, 255, 0.3));
+    }
+    
+    /* Improved rating items for better clarity */
     .rating-item {
         display: flex;
         align-items: center;
         padding: 15px;
         margin: 10px 0;
-        background: linear-gradient(145deg, #ffffff, #f5f7fa);
+        background: rgba(255, 255, 255, 0.1);  /* Semi-transparent white background */
         border-radius: 10px;
         transition: all 0.3s ease;
-        border: 1px solid rgba(29, 91, 121, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        position: relative;
+        overflow: hidden;
     }
+    
     .rating-item:hover {
         transform: translateX(5px);
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+        background: rgba(255, 255, 255, 0.15);  /* Slightly more opaque on hover */
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
     }
-
-    /* Speed Indicators */
+    
+    .rating-item span {
+        color: #FFFFFF;  /* White text for better contrast */
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);  /* Text shadow for better readability */
+    }
+    
+    /* Enhanced risk indicator dots */
     .speed-dot {
-        width: 12px;
+        min-width: 12px;
         height: 12px;
         border-radius: 50%;
         margin-right: 15px;
         position: relative;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
     }
-    .speed-dot::after {
-        content: '';
-        position: absolute;
-        width: 20px;
-        height: 20px;
-        border-radius: 50%;
-        background: inherit;
-        opacity: 0.3;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
+    
+    /* Specific colors for risk levels */
+    .speed-dot.medium {
+        background-color: #FFD700;  /* Gold for medium risk */
+        box-shadow: 0 0 8px rgba(255, 215, 0, 0.7);
     }
-    .medium { background: #B59B00; }
-    .high { background: #FFA500; }
-    .extreme { background: #FF0000; }
-
-    /* Filter Controls */
-    .filter-control {
-        background: white;
-        padding: 20px;
-        border-radius: 12px;
-        margin: 15px 0;
-        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.03);
+    
+    .speed-dot.high {
+        background-color: #FFA500;  /* Orange for high risk */
+        box-shadow: 0 0 8px rgba(255, 165, 0, 0.7);
     }
-
-    /* Radio Button Styling */
-    .stRadio > label {
-        padding: 12px 20px !important;
-        background: white !important;
+    
+    .speed-dot.extreme {
+        background-color: #FF0000;  /* Red for extreme risk */
+        box-shadow: 0 0 8px rgba(255, 0, 0, 0.7);
+    }
+    
+    /* Radio button styling */
+    div[data-testid="stRadio"] label {
+        background: rgba(255, 255, 255, 0.1) !important;  /* Semi-transparent white background */
+        color: #FFFFFF !important;  /* White text */
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2) !important;
+    }
+    
+    div[data-testid="stRadio"] label:hover {
+        background: rgba(255, 255, 255, 0.2) !important;  /* Slightly more opaque on hover */
+    }
+    
+    /* Slider styling */
+    .stSlider {
+        background: rgba(255, 255, 255, 0.1) !important;  /* Semi-transparent white background */
+        padding: 10px !important;
+        border-radius: 10px !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    }
+    
+    .stSlider [data-baseweb="slider"] span {
+        color: #706D54 !important;  /* White text */
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2) !important;
+    }
+    
+    /* Date display styling */
+    .date-display {
+        background: rgba(29, 91, 121, 0.2);  /* Darker semi-transparent background */
+        color: #FFFFFF;  /* White text */
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.4);  /* Stronger text shadow */
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        padding: 15px;
+        border-radius: 10px;
+        margin-top: 10px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);  /* Add shadow for depth */
+    }
+    
+    /* Date display specific styling */
+    .date-display-days {
+        font-size: 20px;  /* Slightly larger */
+        font-weight: 700;  /* Bolder */
+        color: #FFFFFF;  /* White */
+        margin-bottom: 5px;
+        text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.5);  /* Enhanced shadow */
+    }
+    
+    .date-display-range {
+        font-size: 17px;  /* Slightly larger */
+        color: #FFFFFF;  /* Solid white instead of transparent */
+        font-weight: 600;  /* Semi-bold */
+        text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.5);  /* Enhanced shadow */
+    }
+    
+    /* Chart title styling - updated with darker gradient background */
+    .chart-title {
+        background: linear-gradient(135deg, rgba(29, 91, 121, 0.85), rgba(46, 139, 87, 0.85));  /* Darker gradient background */
+        color: #FFFFFF;  /* White text */
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);  /* Enhanced text shadow for better readability */
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        padding: 15px;
+        border-radius: 10px;
+        margin: 20px 0;
+        text-align: center;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);  /* Enhanced shadow for depth */
+    }
+    
+    .chart-title h2 {
+        margin: 0;
+        font-size: 26px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+    }
+    
+    /* Fleet group title styling to match main titles */
+    .fleet-group-title {
+        background: linear-gradient(135deg, rgba(29, 91, 121, 0.85), rgba(46, 139, 87, 0.85));
+        color: #FFFFFF;
+        padding: 1.5rem;
+        border-radius: 15px;
+        margin: 1rem 0;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    }
+    
+    .fleet-group-title h2 {
+        font-size: 28px;
+        font-weight: 700;
+        color: #FFFFFF;
+        text-align: center;
+        margin: 0;
+        text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.3);
+    }
+    
+    /* Additional styling enhancements to ensure consistent dark backgrounds */
+    [data-chart] {
+        background: linear-gradient(135deg, rgba(29, 91, 121, 0.85), rgba(46, 139, 87, 0.85)) !important;
+    }
+    
+    /* Style slider thumb and track */
+    .stSlider > div > div > div {
+        background-color: #FFFFFF !important;
+    }
+    
+    /* Style the slider numbers */
+    .stSlider [data-baseweb="slider"] [role="slider"] + div {
+        font-weight: 700 !important;
+        color: #FFFFFF !important;
+        font-size: 1.1rem !important;
+    }
+    
+    /* Override slider range number styles */
+    [data-testid="stSlider"] span {
+        font-weight: 700 !important;
+        color: #FFFFFF !important;
+        font-size: 1.1rem !important;
+    }
+    
+    /* Remove any background from text below slider */
+    [data-testid="stSlider"] + div {
+        background: transparent !important;
+    }
+    div[style*='text-align: center; color: #666'] {
+        font-weight: 700 !important;
+        color: #FFFFFF !important;
+        font-size: 1.1rem !important;
+    }
+    
+    /* Make radio buttons more visible against gradient */
+    div[data-testid="stRadio"] div[role="radiogroup"] div:has(input[type="radio"]) {
+        background-color: rgba(255, 255, 255, 0.15) !important;
         border-radius: 8px !important;
-        border: 1px solid rgba(29, 91, 121, 0.2) !important;
         margin: 5px 0 !important;
-        transition: all 0.3s ease !important;
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
     }
-    .stRadio > label:hover {
-        background: rgba(29, 91, 121, 0.05) !important;
-        border-color: #1D5B79 !important;
+    
+    /* Improve radio text visibility */
+    div[data-testid="stRadio"] label span {
+        color: #FFFFFF !important;
+        font-weight: 500 !important;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2) !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -433,20 +649,29 @@ with col3:
                 
                 # Display days and date range with improved styling
                 st.markdown(f"""
-                <div style='text-align: center; margin-top: 5px;'>
-                    <div style='font-size: 18px; font-weight: 600; color: #1D5B79;'>{trend_days} {get_translation('days', lang)}</div>
-                    <div style='font-size: 14px; color: #333; margin-top: 5px; background-color: rgba(29, 91, 121, 0.1); 
-                         padding: 5px 10px; border-radius: 5px; display: inline-block;'>
-                        {start_date_str} → {end_date_str}
-                    </div>
+                <div class="date-display">
+                    <div class="date-display-days dark-mode-compatible">{trend_days} {get_translation('days', lang)}</div>
+                    <div class="date-display-range dark-mode-compatible">{start_date_str} → {end_date_str}</div>
                 </div>
                 """, unsafe_allow_html=True)
             else:
-                st.markdown(f"<div style='text-align: center; color: #333; font-weight: 500;'>{trend_days} {get_translation('days', lang)}</div>", unsafe_allow_html=True)
+                st.markdown(f"""
+                <div class="date-display">
+                    <div class="date-display-days">{trend_days} {get_translation('days', lang)}</div>
+                </div>
+                """, unsafe_allow_html=True)
         except Exception as e:
-            st.markdown(f"<div style='text-align: center; color: #333; font-weight: 500;'>{trend_days} {get_translation('days', lang)}</div>", unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class="date-display">
+                <div class="date-display-days">{trend_days} {get_translation('days', lang)}</div>
+            </div>
+            """, unsafe_allow_html=True)
     else:
-        st.markdown(f"<div style='text-align: center; color: #333; font-weight: 500;'>{trend_days} {get_translation('days', lang)}</div>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="date-display">
+            <div class="date-display-days">{trend_days} {get_translation('days', lang)}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # Create containers for loading states
 loading_container = st.empty()
@@ -551,7 +776,27 @@ if not df.empty and 'Overspeeding Value' in df.columns:
 
 
 # -------------------- SPEEDING EVENTS BY DAY --------------------
-render_chart_title("speeding_events_by_day")
+def render_enhanced_chart_title(translation_key):
+    """Render an enhanced chart title with styling and animations."""
+    try:
+        # Get the translated text
+        title_text = get_translation(translation_key, lang)
+        
+        # Render the enhanced chart title
+        st.markdown(f"""
+        <div class="chart-title" data-chart="{translation_key}" style="padding: 10px; margin: 10px 0;">
+            <h2 style="font-size: 20px; margin: 0;">{title_text}</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    except:
+        # Fallback if something goes wrong
+        st.markdown(f"""
+        <div class="chart-title">
+            <h2 style="font-size: 20px; margin: 0;">{translation_key}</h2>
+        </div>
+        """, unsafe_allow_html=True)
+
+render_enhanced_chart_title("speeding_events_by_day")
 
 # Ensure proper date conversion and handling
 if 'Shift Date' in df.columns:
@@ -638,7 +883,7 @@ if 'Shift Date' in df.columns:
                     template="plotly_white",
                     title_text=get_translation("speeding_events_title", lang),
                     title_x=0.5,
-                    title_font=dict(size=24, family="Arial Black", color="#2a3f5f"),
+                    title_font=dict(size=18, family="Arial", color="#2a3f5f"),
                     xaxis_title=get_translation("date", lang),
                     yaxis_title=get_translation("number_of_events", lang),
                     plot_bgcolor='rgba(0,0,0,0)',
@@ -661,9 +906,9 @@ if 'Shift Date' in df.columns:
                         orientation="h", 
                         yanchor="bottom", 
                         y=-0.3,
-                        font=dict(size=14, color="black")
+                        font=dict(size=12, color="black")
                     ),
-                    margin=dict(l=20, r=20, t=60, b=80)
+                    margin=dict(l=20, r=20, t=40, b=80)
                 )
                 
                 # Store the main figure in session state for PDF generation
@@ -682,7 +927,7 @@ else:
 
 
 # -------------------- OVERSPEEDING INTENSITY BY GROUP --------------------
-render_chart_title("overspeeding_intensity")
+render_enhanced_chart_title("overspeeding_intensity")
 
 # Define color schemes
 bar_colors = {'Extreme': '#FF5733', 'High': '#FFA500', 'Medium': '#FFD700'}
@@ -760,8 +1005,8 @@ if not trend_df.empty and 'Group' in trend_df.columns:
 
             # Update layout
             fig.update_layout(
-                height=450,
-                margin=dict(l=20, r=20, t=80, b=50),
+                height=350,
+                margin=dict(l=20, r=20, t=40, b=50),
                 legend=dict(
                     title=get_translation("risk_level", lang),
                     orientation="h",
@@ -769,13 +1014,13 @@ if not trend_df.empty and 'Group' in trend_df.columns:
                     y=1.02,
                     xanchor="center",
                     x=0.5,
-                    font=dict(size=14, color="black")
+                    font=dict(size=11, color="black")
                 ),
                 plot_bgcolor='rgba(0,0,0,0)',
                 paper_bgcolor='rgba(0,0,0,0)',
                 hoverlabel=dict(
                     bgcolor="black",
-                    font_size=14,
+                    font_size=12,
                     font_color="white",
                     font_family="Arial"
                 ),
@@ -798,20 +1043,8 @@ if not trend_df.empty and 'Group' in trend_df.columns:
 
             # Display chart title and chart
             st.markdown(f"""
-                <div style="
-                    background: linear-gradient(135deg, rgba(29, 91, 121, 0.1), rgba(46, 139, 87, 0.1));
-                    padding: 1.5rem;
-                    border-radius: 15px;
-                    margin: 1rem 0;
-                    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-                ">
-                    <h2 style="
-                        font-size: 28px;
-                        font-weight: 700;
-                        color: #1D5B79;
-                        text-align: center;
-                        margin: 0;
-                    ">📊 {get_translation("fleet_group", lang)}: {group}</h2>
+                <div class="fleet-group-title" style="padding: 10px; margin: 10px 0; background: rgba(29, 91, 121, 0.8); border-radius: 8px;">
+                    <h2 style="font-size: 18px; margin: 0; color: #FFFFFF; text-align: center;">📊 {get_translation("fleet_group", lang)}: {group}</h2>
                 </div>
             """, unsafe_allow_html=True)
             st.plotly_chart(fig, use_container_width=True, key=f"group_chart_{group}")

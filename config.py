@@ -1,4 +1,5 @@
 """Configuration file for the FMS Safety Dashboard."""
+import os
 
 # Theme Configuration
 THEME_CONFIG = {
@@ -54,11 +55,16 @@ PDF_CONFIG = {
 
 # Database Configuration
 DB_CONFIG = {
-    'driver': '{SQL Server}',
-    'server': 'DESKTOP-JQDJV8F',
-    'database': 'FMS_Safety',
-    'trusted_connection': 'yes'
+    'driver': '{ODBC Driver 18 for SQL Server}' if os.environ.get('SQL_SERVER') else '{SQL Server}',
+    'server': os.environ.get('SQL_SERVER', 'DESKTOP-JQDJV8F'),
+    'database': os.environ.get('SQL_DATABASE', 'FMS_DB'),  # Default to FMS_DB but can be overridden by environment variable
+    'trusted_connection': 'yes' if not os.environ.get('SQL_USERNAME') else 'no',
 }
+
+# Add username and password if provided in environment variables
+if os.environ.get('SQL_USERNAME') and os.environ.get('SQL_PASSWORD'):
+    DB_CONFIG['uid'] = os.environ.get('SQL_USERNAME')
+    DB_CONFIG['pwd'] = os.environ.get('SQL_PASSWORD')
 
 # Global CSS Styles
 GLOBAL_CSS = """
@@ -110,30 +116,30 @@ GLOBAL_CSS = """
 translations = {
     "EN": {
         # ... existing English translations ...
-        "event_distribution": "📊 1. Total Event Distribution by Fleet Group",
-        "event_distribution_detailed": "📊 2. Detailed Event Distribution by Fleet Group",
-        "group_comparison": "📊 3. Total Speeding Events (Percentage and Count)",
-        "time_series": "📈 4. Average Speeding Values Over Time",
-        "geo_analysis": "🌍 Geo-Spatial Analysis Dashboard",
-        "scatter_plot_header": "📍 5. Speeding Events by Location",
-        "heatmap": "🔥 6. Speeding Event Heatmap",
-        "dynamic_table": "📊 7. Dynamic Table Viewer",
-        "geo_heatmap_header": "🌍 Geo-Spatial Heat Map",
-        "top_speeding_vehicles": "🚗 Top 20 Vehicles with Most Speeding Events",
+        "event_distribution": "\ud83d\udcca 1. Total Event Distribution by Fleet Group",
+        "event_distribution_detailed": "\ud83d\udcca 2. Detailed Event Distribution by Fleet Group",
+        "group_comparison": "\ud83d\udcca 3. Total Speeding Events (Percentage and Count)",
+        "time_series": "\ud83d\udcc8 4. Average Speeding Values Over Time",
+        "geo_analysis": "\ud83c\udf0d Geo-Spatial Analysis Dashboard",
+        "scatter_plot_header": "\ud83d\udccd 5. Speeding Events by Location",
+        "heatmap": "\ud83d\udd25 6. Speeding Event Heatmap",
+        "dynamic_table": "\ud83d\udcca 7. Dynamic Table Viewer",
+        "geo_heatmap_header": "\ud83c\udf0d Geo-Spatial Heat Map",
+        "top_speeding_vehicles": "\ud83d\ude97 Top 20 Vehicles with Most Speeding Events",
         # ... other translations ...
     },
     "ZH": {
         # ... existing Chinese translations ...
-        "event_distribution": "📊 1. 按车队分组的总事件分布",
-        "event_distribution_detailed": "📊 2. 按车队分组的详细事件分布",
-        "group_comparison": "📊 3. 总超速事件(百分比和数量)",
-        "time_series": "📈 4. 平均超速值随时间变化",
-        "geo_analysis": "🌍 地理空间分析仪表板",
-        "scatter_plot_header": "📍 5. 按位置显示超速事件",
-        "heatmap": "🔥 6. 超速事件热力图",
-        "dynamic_table": "📊 7. 动态表格查看器",
-        "geo_heatmap_header": "🌍 地理空间热力图",
-        "top_speeding_vehicles": "🚗 超速最多的20辆车",
+        "event_distribution": "\ud83d\udcca 1. \u6309\u8f66\u961f\u5206\u7ec4\u7684\u603b\u4e8b\u4ef6\u5206\u5e03",
+        "event_distribution_detailed": "\ud83d\udcca 2. \u6309\u8f66\u961f\u5206\u7ec4\u7684\u8be6\u7ec6\u4e8b\u4ef6\u5206\u5e03",
+        "group_comparison": "\ud83d\udcca 3. \u603b\u8d85\u901f\u4e8b\u4ef6(\u767e\u5206\u6bd4\u548c\u6570\u91cf)",
+        "time_series": "\ud83d\udcc8 4. \u5e73\u5747\u8d85\u901f\u503c\u968f\u65f6\u53d8\u5316",
+        "geo_analysis": "\ud83c\udf0d \u5730\u7406\u7a7a\u95f4\u5206\u6790\u4eea\u8868\u677f",
+        "scatter_plot_header": "\ud83d\udccd 5. \u6309\u4f4d\u7f6e\u663e\u793a\u8d85\u901f\u4e8b\u4ef6",
+        "heatmap": "\ud83d\udd25 6. \u8d85\u901f\u4e8b\u4ef6\u70e4\u529b\u56fe",
+        "dynamic_table": "\ud83d\udcca 7. \u52a8\u6001\u8868\u683c\u67e5\u770b\u5668",
+        "geo_heatmap_header": "\ud83c\udf0d \u5730\u7406\u7a7a\u95f4\u70e4\u529b\u56fe",
+        "top_speeding_vehicles": "\ud83d\ude97 \u8d85\u901f\u6700\u591a\u768420\u8f66",
         # ... other translations ...
     }
-} 
+}

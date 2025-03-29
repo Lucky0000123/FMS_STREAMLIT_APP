@@ -141,6 +141,7 @@ def get_sql_connection() -> Optional[pyodbc.Connection]:
                 error_msg = f"SQL connection failed: {str(inner_e)}"
                 logging.error(error_msg)
                 st.session_state.sql_connection_error = error_msg
+                # Don't show error to user
                 return None
         # Fallback to hardcoded credentials for local development
         else:
@@ -148,6 +149,7 @@ def get_sql_connection() -> Optional[pyodbc.Connection]:
             msg = "No SQL credentials found in secrets.toml"
             logging.warning(msg)
             st.session_state.sql_connection_error = msg
+            # Don't show error to user
             return None
     except Exception as e:
         # Log the error but don't show it to the user
@@ -181,9 +183,9 @@ def render_header(title: str, subtitle: str = "", icon_path: Optional[str] = Non
     subtitle_html = f'<div class="header-subtitle">{subtitle}</div>' if subtitle else ""
 
     header_html = f"""
-    <div class="header-container">
+    <div class="header-container" style="padding: 10px 15px; margin-bottom: 15px;">
       <div class="header-text">
-        <h1 class="header-title">{title}</h1>
+        <h1 class="header-title" style="font-size: 26px; margin: 0; padding: 0;">{title}</h1>
         {subtitle_html}
       </div>
       {icon_html}
@@ -201,19 +203,31 @@ def fetch_sql_data() -> pd.DataFrame:
         pd.DataFrame: DataFrame containing the fetched data, or an empty DataFrame on error.
     """
     with st.spinner(TRANSLATIONS[st.session_state.language].get("loading", "Loading")):
-        time.sleep(1.5)
-        conn = get_sql_connection()
-        if conn:
-            try:
-                query = "SELECT * FROM dbo.FMS_SPEED"
-                df = pd.read_sql(query, conn)
-                conn.close()
-                return process_dataframe(df)  # Process the data before returning
-            except Exception as e:
-                st.error(f"⚠️ Failed to fetch SQL data: {e}")
-                logging.error(f"SQL Query Error: {e}")
+        conn = None
+        try:
+            conn = get_sql_connection()
+            if conn:
+                try:
+                    query = "SELECT * FROM dbo.FMS_SPEED"
+                    df = pd.read_sql(query, conn)
+                    conn.close()
+                    conn = None
+                    return process_dataframe(df)  # Process the data before returning
+                except Exception as e:
+                    # Log the error but don't show it to the user
+                    logging.error(f"SQL Query Error: {e}")
+                    return pd.DataFrame()
+                finally:
+                    if conn:
+                        try:
+                            conn.close()
+                        except:
+                            pass
+            else:
                 return pd.DataFrame()
-        else:
+        except Exception as e:
+            # Log the error but don't show it to the user
+            logging.error(f"SQL fetch error: {e}")
             return pd.DataFrame()
 
 
@@ -371,40 +385,29 @@ def load_lottieurl(url: str) -> Optional[Any]:
     return None
 
 
-def render_chart_title(translation_key: str):
-    """Render a styled title for charts."""
-    lang = st.session_state.language
-    st.markdown(f"""
-        <style>
-            .chart-title-container {{
-                background: linear-gradient(135deg, rgba(29, 91, 121, 0.1), rgba(46, 139, 87, 0.1));
-                padding: 1.5rem;
-                border-radius: 15px;
-                margin: 1rem 0;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-                transition: all 0.3s ease;
-            }}
-            .chart-title-container:hover {{
-                transform: translateY(-5px);
-                box-shadow: 0 6px 25px rgba(0, 0, 0, 0.1);
-            }}
-            .chart-title {{
-                font-size: 32px;
-                font-weight: 800;
-                background: linear-gradient(135deg, #1D5B79, #2E8B57);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                text-align: center;
-                margin: 0;
-                padding: 5px;
-                letter-spacing: 1px;
-                font-family: 'Segoe UI', Arial, sans-serif;
-            }}
-        </style>
-        <div class="chart-title-container">
-            <h2 class="chart-title">{TRANSLATIONS[lang][translation_key]}</h2>
+def render_chart_title(translation_key, lang=None):
+    """Render an enhanced chart title with the appropriate translation."""
+    try:
+        # Use the provided language or fetch from session state
+        if lang is None:
+            lang = st.session_state.language
+            
+        # Get the translated text
+        title_text = TRANSLATIONS[lang][translation_key]
+        
+        # Render the chart title with data attribute for specific styling
+        st.markdown(f"""
+        <div class="chart-title" data-chart="{translation_key}">
+            <h2>{title_text}</h2>
         </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
+    except KeyError:
+        # Fallback if translation is missing
+        st.markdown(f"""
+        <div class="chart-title">
+            <h2>{translation_key}</h2>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 def render_glow_line() -> None:

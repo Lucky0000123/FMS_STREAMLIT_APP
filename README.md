@@ -12,6 +12,172 @@ A comprehensive Fleet Management System (FMS) Safety Dashboard application built
 - **Flexible Filtering**: Filter data by date range, vehicle group, driver, and more
 - **Database Diagnostics**: Troubleshoot database connection issues with built-in diagnostic tools
 
+## Docker Deployment
+
+### Prerequisites
+
+- Docker
+- Docker Compose
+- Git
+
+### Deployment Steps
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd FMS_ST
+```
+
+2. Build and start the Docker container:
+```bash
+docker-compose up --build
+```
+
+3. Access the dashboard:
+- Open your web browser and navigate to `http://localhost:8501`
+- The dashboard will be available on port 8501
+
+### Docker Commands
+
+- Start the application:
+```bash
+docker-compose up
+```
+
+- Start in detached mode:
+```bash
+docker-compose up -d
+```
+
+- Stop the application:
+```bash
+docker-compose down
+```
+
+- View logs:
+```bash
+docker-compose logs -f
+```
+
+- Rebuild the container:
+```bash
+docker-compose up --build
+```
+
+### Volume Mounts
+
+The following directories are mounted as volumes:
+- `./data`: For storing data files
+- `./reports`: For storing generated reports
+- `./assets`: For storing static assets
+
+### Environment Variables
+
+The following environment variables can be configured in the `docker-compose.yml` file:
+- `STREAMLIT_SERVER_PORT`: Port for the Streamlit server (default: 8501)
+- `STREAMLIT_SERVER_ADDRESS`: Server address (default: 0.0.0.0)
+- `TZ`: Timezone (default: Asia/Jakarta)
+
+### Troubleshooting
+
+1. If the container fails to start:
+```bash
+docker-compose logs
+```
+
+2. To rebuild from scratch:
+```bash
+docker-compose down
+docker-compose build --no-cache
+docker-compose up
+```
+
+3. If you need to access the container shell:
+```bash
+docker-compose exec fms-dashboard /bin/bash
+```
+
+### Notes
+
+- The application requires a SQL Server connection. Make sure to configure the connection settings in the application.
+- The dashboard is configured to run on port 8501 by default.
+- Data persistence is handled through Docker volumes.
+- The container will automatically restart unless explicitly stopped.
+
+## Network Share Deployment
+
+### Prerequisites
+
+- Docker
+- Docker Compose
+- Network access to `\\10.211.10.2\Users\Administrator\streamlit_fms`
+- SQL Server access (10.211.10.2)
+
+### Deployment Steps
+
+1. Clone the repository to the network share:
+```bash
+git clone <repository-url> \\10.211.10.2\Users\Administrator\streamlit_fms
+cd \\10.211.10.2\Users\Administrator\streamlit_fms
+```
+
+2. Run the deployment script:
+   - For Windows: Double-click `deploy.bat` or run it from Command Prompt
+   - For Linux/Mac: Run `./deploy.sh`
+
+3. Access the dashboard:
+   - Open your web browser and navigate to `http://localhost:8502`
+   - The dashboard will be available on port 8502
+
+### Directory Structure
+
+The application uses the following directories on the network share:
+- `\\10.211.10.2\Users\Administrator\streamlit_fms\data`: For storing data files
+- `\\10.211.10.2\Users\Administrator\streamlit_fms\reports`: For storing generated reports
+- `\\10.211.10.2\Users\Administrator\streamlit_fms\assets`: For storing static assets
+
+### Environment Variables
+
+The following environment variables are configured in the `docker-compose.yml` file:
+- `STREAMLIT_SERVER_PORT`: Port for the Streamlit server (default: 8502)
+- `STREAMLIT_SERVER_ADDRESS`: Server address (default: 0.0.0.0)
+- `TZ`: Timezone (default: Asia/Jakarta)
+- `SQL_SERVER`: SQL Server address (10.211.10.2)
+- `SQL_DATABASE`: Database name (FMS_DB)
+- `SQL_USERNAME`: Database username
+- `SQL_PASSWORD`: Database password
+
+### Troubleshooting
+
+1. If the container fails to start:
+```bash
+docker-compose logs
+```
+
+2. To rebuild from scratch:
+```bash
+docker-compose down
+docker-compose build --no-cache
+docker-compose up
+```
+
+3. If you need to access the container shell:
+```bash
+docker-compose exec fms-dashboard /bin/bash
+```
+
+4. Network Share Access Issues:
+   - Ensure you have proper permissions on the network share
+   - Check if the network share is accessible
+   - Verify the directory structure exists
+
+### Notes
+
+- The application is configured to run on port 8502
+- Data persistence is handled through network share volumes
+- The container will automatically restart unless explicitly stopped
+- Make sure the SQL Server (10.211.10.2) is accessible from the Docker container
+
 ## Getting Started
 
 ### Prerequisites
